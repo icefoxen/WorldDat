@@ -87,14 +87,19 @@ pub fn run_client() -> Result<()> {
         .config(quicr::Config {
             protocols: vec![b"hq-11"[..].into()],
             keylog: None, //options.keylog,
-            accept_insecure_certs: true, // options.accept_insecure_certs,
             ..quicr::Config::default()
         });
     let (endpoint, driver, _) = builder.bind("[::]:0")?;
     runtime.spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
 
+    let client_config = quicr::ClientConfig {
+        server_name: Some("localhost"),
+        session_ticket: None,
+        accept_insecure_certs: true,
+    };
+
     runtime.block_on(
-        endpoint.connect(&remote, Some(b"localhost"))
+        endpoint.connect(&remote, client_config)
             .map_err(|_e| ()) // format_err!("failed to connect: {}", e))
             .and_then(move |(conn, _req)| {
                 info!("Connected");
