@@ -37,8 +37,8 @@ fn setup_logging() {
     // Formats logs
         .format(move |out, message, record| {
             out.finish(format_args!(
-                "[{}][{:<5}][{}] {}",                                                                         
-                chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),                                              
+                "[{}][{:<5}][{}] {}",
+                chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
                 colors.color(record.level()).to_string(),
                 record.target(),
                 message
@@ -58,7 +58,7 @@ pub struct PeerOpt {
     /// Initial node to connect to
     #[structopt(short = "i", long = "initial")]
     initial_peer: Option<String>,
-    
+
     /// TLS private key in PEM format
     #[structopt(parse(from_os_str), short = "k", long = "key", requires = "cert")]
     key: Option<PathBuf>,
@@ -103,17 +103,17 @@ fn main() {
         match opt {
             Opt::Server(s) => {
                 if let Err(e) = peer::run_server(s) {
-                    eprintln!("ERROR: {}", e.cause());
+                    eprintln!("ERROR: {:?}", e);
                     1
                 } else { 0 }
             },
             Opt::Client => {
                 if let Err(e) = peer::run_client() {
-                    eprintln!("ERROR: {}", e.cause());
+                    eprintln!("ERROR: {:?}", e);
                     1
                 } else { 0 }
             }
-            Opt::Peer(p) => {
+            Opt::Peer(_p) => {
                 0
                 /*
                 if let Err(e) = peer::run_peer(p) {
@@ -138,7 +138,7 @@ fn old_main() -> Result<(), ()> {
         .expect("Could not parse listen address");
     let listener = net::TcpListener::bind(&listen_addr)
         .expect("Could not bind to listen address");
-    
+
     let server =
         outgoing_connections.and_then(|_| {
             listener.incoming()

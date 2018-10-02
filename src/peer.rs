@@ -1,21 +1,16 @@
 use std::result;
-use std::fs::{self, File};
-use std::io::{self, Read, Write};
-//use std::path::{self, Path, PathBuf};
+use std::fs::{File};
+use std::io::{Read, Write};
 use std::str::{self, FromStr};
-use std::rc::Rc;
 use std::time::{Instant, Duration};
 
 use tokio;
-use tokio::executor::current_thread;
+use tokio::runtime::current_thread;
 use tokio::runtime::current_thread::Runtime;
-//use tokio::io::AsyncRead;
-use tokio_io;
 use quicr;
-use futures::{future, Future, Stream};
+use futures::{Future, Stream};
 use failure::{Error, ResultExt};
 use rmp_serde;
-use bytes;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 enum Message {
@@ -30,7 +25,7 @@ enum Message {
 use {ServerOpt, PeerOpt};
 type Result<T> = result::Result<T, Error>;
 
-fn run_ping2(stream: quicr::Stream) -> impl Future<Item=(), Error=()> {
+fn run_ping(stream: quicr::Stream) -> impl Future<Item=(), Error=()> {
 
     info!("Trying to send ping");
     let message = Message::Ping{id: 999};
@@ -87,7 +82,7 @@ pub fn run_client() -> Result<()> {
     //let remote = url.with_default_port(|_| Ok(4433))?.to_socket_addrs()?.next().ok_or(format_err!("couldn't resolve to an address"))?;
     let remote = ::std::net::SocketAddr::from_str("127.0.0.1:4433").expect("Invalid url for client");
 
-    
+
     let mut runtime = Runtime::new()?;
 
     let config = quicr::Config {
@@ -162,7 +157,7 @@ we don't bother with a session_path
     Ok(())
 }
 
-
+/*
 fn handle_connection(conn: quicr::NewConnection) {
     let quicr::NewConnection { incoming, connection } = conn;
     info!("got connection, remote {}, address {}, protocol {}",
@@ -206,7 +201,7 @@ fn handle_request(stream: quicr::NewStream) {
             .map_err(move |e| error!("request failed"))
     )
 }
-
+*/
 
 pub fn run_server(options: ServerOpt) -> Result<()> {
     let mut runtime = Runtime::new()?;
@@ -256,7 +251,8 @@ pub fn run_server(options: ServerOpt) -> Result<()> {
                             return Ok(());
                         }
                     };
-                    current_thread::spawn(run_ping2(stream));
+                    current_thread::spawn(run_ping
+                (stream));
                         /*
                     current_thread::spawn(
                         quicr::read_to_end(stream, 1024 * 64)
@@ -329,7 +325,8 @@ impl PeerConnection {
                     }
                 };
                 Self::run_peer(stream);
-                //current_thread::spawn(run_ping2(stream));
+                //current_thread::spawn(run_ping
+            (stream));
                 Ok(())
             })
     }
@@ -427,7 +424,7 @@ pub fn run_peer(options: PeerOpt) -> Result<()> {
             current_thread::spawn(p.run());
             Ok(())
         });
-    
+
     let mut runtime = Runtime::new()?;
     runtime.spawn(runner);
 
