@@ -114,19 +114,6 @@ pub fn run_client() -> Result<()> {
             .map_err(|e| format_err!("failed to connect: {}", e))
             .and_then(move |conn| {
                 eprintln!("connected at {}", duration_secs(&start.elapsed()));
-                /*
-we don't bother with a session_path
-                if let Some(path) = session_path.take() {
-                    current_thread::spawn(conn.session_tickets.map_err(|_| ()).for_each(move |data| {
-                        if let Err(e) = fs::write(&path, &data) {
-                            error!("failed to write session: {}", e.to_string());
-                        } else {
-                            info!("wrote {}B session", data.len());
-                        }
-                        Ok(())
-                    }));
-                }
-*/
                 let conn = conn.connection;
                 let stream = conn.open_bi();
                 stream.map_err(|e| format_err!("failed to open stream: {}", e))
@@ -143,7 +130,7 @@ we don't bother with a session_path
                     })
                     .and_then(move |((_, data), response_start)| {
                         let seconds = duration_secs(&response_start.elapsed());
-                        eprintln!("response received in {} - {} KiB/s", seconds, data.len() as f32 / (seconds * 1024.0));
+                        eprintln!("response received in {}ms - {} KiB/s", response_start.elapsed().subsec_millis(), data.len() as f32 / (seconds * 1024.0));
                         let msg: ::std::result::Result<Message, rmp_serde::decode::Error> = rmp_serde::from_slice(&data);
                         debug!("Got response: {:?}", msg);
                         //io::stdout().write_all(&data).unwrap();
@@ -211,7 +198,7 @@ pub fn run_server(options: ServerOpt) -> Result<()> {
         .config(quicr::Config {
             protocols: vec![b"hq-11"[..].into()],
             max_remote_bi_streams: 64,
-            keylog: options.keylog,
+            keylog: None,
             ..quicr::Config::default()
         })
         .listen();
@@ -433,3 +420,32 @@ pub fn run_peer(options: PeerOpt) -> Result<()> {
     Ok(())
 }
 */
+
+
+#[cfg(test)]
+mod tests {
+
+    use std::thread;
+
+    use failure;
+    use lazy_static;
+
+    use peer;
+    use ServerOpt;
+
+    // This isn't necessarily the best way to do this but
+    lazy_static! {
+        static ref SERVER_THREAD: thread::JoinHandle<Result<(), failure::Error>> = thread::spawn(|| {
+            peer::run_server(ServerOpt {
+                key: None,
+                cert: None,
+            })
+        });
+    }
+    #[test]
+    fn test_client_connection() {
+        lazy_static::initialize(&SERVER_THREAD);
+        let res = peer::run_client();
+        assert!(res.is_ok())
+    }
+}

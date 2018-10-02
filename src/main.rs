@@ -20,6 +20,10 @@ extern crate rmp_serde;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
+// lazy_static used in unit tests
+#[allow(unused_imports)]
+#[macro_use]
+extern crate lazy_static;
 
 use std::path::{PathBuf};
 use structopt::StructOpt;
@@ -56,23 +60,25 @@ fn setup_logging() {
 #[derive(StructOpt, Debug, Clone)]
 pub struct PeerOpt {
     /// Initial node to connect to
-    #[structopt(short = "i", long = "initial")]
-    initial_peer: Option<String>,
+    #[structopt(short = "b", long = "bootstrap")]
+    bootstrap_peer: Option<String>,
 
+    /// Port to listen on for incoming connections.
+    #[structopt(default_value = "4433", short = "p", long = "port")]
+    listen_port: u16,
+
+/*
     /// TLS private key in PEM format
     #[structopt(parse(from_os_str), short = "k", long = "key", requires = "cert")]
     key: Option<PathBuf>,
     /// TLS certificate in PEM format
     #[structopt(parse(from_os_str), short = "c", long = "cert", requires = "key")]
     cert: Option<PathBuf>,
-
+*/
 }
 
 #[derive(StructOpt, Debug)]
 pub struct ServerOpt {
-    /// file to log TLS keys to for debugging
-    #[structopt(parse(from_os_str), long = "keylog")]
-    keylog: Option<PathBuf>,
     // /// directory to serve files from
     //#[structopt(parse(from_os_str))]
     //root: PathBuf,
@@ -127,30 +133,3 @@ fn main() {
     };
     ::std::process::exit(code);
 }
-
-
-/*
-fn old_main() -> Result<(), ()> {
-    setup_logging();
-    let opt = Opt::from_args();
-    debug!("Command line options: {:#?}", opt);
-    let listen_addr: SocketAddr = opt.listen_addr.parse()
-        .expect("Could not parse listen address");
-    let listener = net::TcpListener::bind(&listen_addr)
-        .expect("Could not bind to listen address");
-
-    let server =
-        outgoing_connections.and_then(|_| {
-            listener.incoming()
-                .map_err(|e| error!("Error in listener: {:?}", e))
-                .for_each(|socket| {
-                    debug!("Incoming connection?");
-                    tokio::spawn(peer::PeerConnection::start(socket))
-                })
-        });
-
-    tokio::run(server);
-
-    Ok(())
-}
-*/

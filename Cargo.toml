@@ -6,15 +6,16 @@ authors = ["Simon Heath <icefoxen@gmail.com>"]
 [dependencies]
 quicr = "0.4"
 bytes = "0.4"
-tokio = "0.1.6"
+tokio = "0.1"
 tokio-io = "0.1"
 failure = "0.1"
-futures = "0.1.21"
+futures = "0.1"
 structopt = "0.2"
 url = "1"
 log = "0.4"
 fern = { version = "0.5", features = ["colored"] }
 chrono = "0.4"
+lazy_static = "1"
 
 serde = "1"
 serde_derive = "1"
