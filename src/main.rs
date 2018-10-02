@@ -1,14 +1,13 @@
+extern crate bytes;
+extern crate quicr;
 extern crate tokio;
 extern crate tokio_io;
-extern crate quicr;
-extern crate bytes;
 #[macro_use]
 extern crate failure;
 extern crate futures;
 #[macro_use]
 extern crate structopt;
 extern crate url;
-
 
 extern crate chrono;
 #[macro_use]
@@ -25,7 +24,7 @@ extern crate serde_derive;
 #[macro_use]
 extern crate lazy_static;
 
-use std::path::{PathBuf};
+use std::path::PathBuf;
 use structopt::StructOpt;
 
 mod peer;
@@ -66,8 +65,7 @@ pub struct PeerOpt {
     /// Port to listen on for incoming connections.
     #[structopt(default_value = "4433", short = "p", long = "port")]
     listen_port: u16,
-
-/*
+    /*
     /// TLS private key in PEM format
     #[structopt(parse(from_os_str), short = "k", long = "key", requires = "cert")]
     key: Option<PathBuf>,
@@ -83,10 +81,20 @@ pub struct ServerOpt {
     //#[structopt(parse(from_os_str))]
     //root: PathBuf,
     /// TLS private key in PEM format
-    #[structopt(parse(from_os_str), short = "k", long = "key", requires = "cert")]
+    #[structopt(
+        parse(from_os_str),
+        short = "k",
+        long = "key",
+        requires = "cert"
+    )]
     key: Option<PathBuf>,
     /// TLS certificate in PEM format
-    #[structopt(parse(from_os_str), short = "c", long = "cert", requires = "key")]
+    #[structopt(
+        parse(from_os_str),
+        short = "c",
+        long = "cert",
+        requires = "key"
+    )]
     cert: Option<PathBuf>,
 }
 
@@ -98,9 +106,7 @@ enum Opt {
     Client,
     #[structopt(name = "peer")]
     Peer(PeerOpt),
-
 }
-
 
 fn main() {
     setup_logging();
@@ -111,13 +117,17 @@ fn main() {
                 if let Err(e) = peer::run_server(s) {
                     eprintln!("ERROR: {:?}", e);
                     1
-                } else { 0 }
-            },
+                } else {
+                    0
+                }
+            }
             Opt::Client => {
                 if let Err(e) = peer::run_client() {
                     eprintln!("ERROR: {:?}", e);
                     1
-                } else { 0 }
+                } else {
+                    0
+                }
             }
             Opt::Peer(_p) => {
                 0
@@ -128,7 +138,6 @@ fn main() {
                 } else { 0 }
                  */
             }
-
         }
     };
     ::std::process::exit(code);
