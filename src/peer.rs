@@ -88,7 +88,14 @@ pub fn run_client() -> Result<()> {
             protocols: vec![b"hq-11"[..].into()],
             keylog: None, //options.keylog,
             ..quicr::Config::default()
-        });
+        })
+        .listen();
+    builder.generate_insecure_certificate().context("Tried to gen certs?")?;
+    let (_, driver, incoming) = builder.bind(remote)?;
+    
+    runtime.spawn(incoming.for_each(move |conn| { handle_connection(conn); Ok(()) }));
+    runtime.block_on(driver)?;
+    /*
     let (endpoint, driver, _) = builder.bind("[::]:0")?;
     runtime.spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
 
@@ -109,9 +116,54 @@ pub fn run_client() -> Result<()> {
                     .and_then(|stream| run_ping2(stream))
             })
     ).expect("fdafs");
+*/
     Ok(())
 }
 
+
+fn handle_connection(conn: quicr::NewConnection) {
+    let quicr::NewConnection { incoming, connection } = conn;
+    info!("got connection, remote {}, address {}, protocol {}",
+          connection.remote_id(),
+          connection.remote_address(),
+          connection.protocol().map_or_else(|| "<none>".into(), |x| String::from_utf8_lossy(&x).into_owned()));
+
+    // Each stream initiated by the client constitutes a new request.
+    current_thread::spawn(
+        incoming
+            .map_err(move |e| info!("connection terminated for reason {}", e))
+            .for_each(move |stream| { handle_request(stream); Ok(()) })
+    );
+}
+
+
+fn handle_request(stream: quicr::NewStream) {
+    let stream = match stream {
+        quicr::NewStream::Bi(stream) => stream,
+        quicr::NewStream::Uni(_) => unreachable!(), // config.max_remote_uni_streams is defaulted to 0
+    };
+
+    current_thread::spawn(
+        quicr::read_to_end(stream, 64 * 1024) // Read the request, which must be at most 64KiB
+            .map_err(|e| format_err!("failed reading request: {}", e))
+            .and_then(move |(stream, req)| {
+                let mut escaped = String::new();
+                for &x in &req[..] {
+                    let part: Vec<u8> = ::std::ascii::escape_default(x).collect();
+                    escaped.push_str(str::from_utf8(&part).unwrap());
+                }
+                info!("got request {}", escaped);
+                // Execute the request
+                let resp = "Foo!";
+                // Write the response
+                tokio::io::write_all(stream, resp).map_err(|e| format_err!("failed to send response: {}", e))
+            })
+            // Gracefully terminate the stream
+            .and_then(|(stream, _)| tokio::io::shutdown(stream).map_err(|e| format_err!("failed to shutdown stream: {}", e)))
+            .map(move |_| info!("request complete"))
+            .map_err(move |e| error!("request failed"))
+    )
+}
 
 
 pub fn run_server(options: ServerOpt) -> Result<()> {
@@ -204,7 +256,7 @@ pub fn run_server(options: ServerOpt) -> Result<()> {
     Ok(())
 }
 
-
+/*
 /// Contains everything needed for each particular peer connection.
 struct PeerConnection {
     /// The IncomingStreams generates QUIC streams.
@@ -341,3 +393,4 @@ pub fn run_peer(options: PeerOpt) -> Result<()> {
 
     Ok(())
 }
+*/

@@ -114,10 +114,13 @@ fn main() {
                 } else { 0 }
             }
             Opt::Peer(p) => {
+                0
+                /*
                 if let Err(e) = peer::run_peer(p) {
                     eprintln!("ERROR: {}", e.cause());
                     1
                 } else { 0 }
+                 */
             }
 
         }
