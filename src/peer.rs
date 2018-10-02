@@ -1,9 +1,10 @@
 use std::result;
-use std::fs::File;
-use std::io::{Read, Write};
+use std::fs::{self, File};
+use std::io::{self, Read, Write};
 //use std::path::{self, Path, PathBuf};
 use std::str::{self, FromStr};
 use std::rc::Rc;
+use std::time::{Instant, Duration};
 
 use tokio;
 use tokio::executor::current_thread;
@@ -33,7 +34,8 @@ fn run_ping2(stream: quicr::Stream) -> impl Future<Item=(), Error=()> {
 
     info!("Trying to send ping");
     let message = Message::Ping{id: 999};
-    let serialized_message = rmp_serde::to_vec(&message).unwrap();
+    let serialized_message = rmp_serde::to_vec(&message)
+        .expect("Could not serialize message?!");
     tokio::io::write_all(stream, serialized_message)
         .map_err(|e| warn!("Failed to send request: {}", e))
         /*
@@ -49,16 +51,20 @@ fn run_ping2(stream: quicr::Stream) -> impl Future<Item=(), Error=()> {
                 .map_err(|e| warn!("failed to read response: {}", e))
         })
         .and_then(move |(stream, req)| {
-            let msg: Message = rmp_serde::from_slice(&req)
-                .unwrap();
+            let msg: ::std::result::Result<Message, rmp_serde::decode::Error> = rmp_serde::from_slice(&req);
             debug!("Got response: {:?}", msg);
             let to_send = match msg {
-                Message::Ping{id} => {
+                Ok(Message::Ping{id}) => {
                     info!("Trying to send pong");
                     let message = Message::Pong{id};
                     rmp_serde::to_vec(&message).unwrap()
                 },
-                _ => {
+                Ok(val) => {
+                    info!("Got message: {:?}, not doing anything with it", val);
+                    vec![]
+                },
+                Err(e) => {
+                    info!("Got unknown message: {:?}, error {:?}", &req, e);
                     vec![]
                 }
             };
@@ -74,49 +80,85 @@ fn run_ping2(stream: quicr::Stream) -> impl Future<Item=(), Error=()> {
         .map(move |_| info!("request complete"))
 }
 
+fn duration_secs(x: &Duration) -> f32 { x.as_secs() as f32 + x.subsec_nanos() as f32 * 1e-9 }
 
 pub fn run_client() -> Result<()> {
     //let url = options.url;
     //let remote = url.with_default_port(|_| Ok(4433))?.to_socket_addrs()?.next().ok_or(format_err!("couldn't resolve to an address"))?;
     let remote = ::std::net::SocketAddr::from_str("127.0.0.1:4433").expect("Invalid url for client");
 
+    
     let mut runtime = Runtime::new()?;
 
+    let config = quicr::Config {
+        protocols: vec![b"hq-11"[..].into()],
+        keylog: None,
+        ..quicr::Config::default()
+    };
+
+    let ticket = None;
     let mut builder = quicr::Endpoint::new();
     builder
-        .config(quicr::Config {
-            protocols: vec![b"hq-11"[..].into()],
-            keylog: None, //options.keylog,
-            ..quicr::Config::default()
-        })
-        .listen();
-    builder.generate_insecure_certificate().context("Tried to gen certs?")?;
-    let (_, driver, incoming) = builder.bind(remote)?;
-    
-    runtime.spawn(incoming.for_each(move |conn| { handle_connection(conn); Ok(()) }));
-    runtime.block_on(driver)?;
-    /*
+        .config(config);
     let (endpoint, driver, _) = builder.bind("[::]:0")?;
     runtime.spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
 
-    let client_config = quicr::ClientConfig {
-        server_name: Some("localhost"),
-        session_ticket: None,
-        accept_insecure_certs: true,
-    };
+    let message = Message::Ping{id: 999};
+    let serialized_message = rmp_serde::to_vec(&message)
+        .expect("Could not serialize message?!");
 
+    let start = Instant::now();
     runtime.block_on(
-        endpoint.connect(&remote, client_config)
-            .map_err(|_e| ()) // format_err!("failed to connect: {}", e))
-            .and_then(move |(conn, _req)| {
-                info!("Connected");
-                let stream_future = conn.open_bi();
-                stream_future
-                    .map_err(|e| warn!("Connection error: {:?}", e))
-                    .and_then(|stream| run_ping2(stream))
-            })
-    ).expect("fdafs");
+        endpoint.connect(&remote,
+                         quicr::ClientConfig {
+                             server_name: Some("localhost:4433"),
+                             accept_insecure_certs: true,
+                             session_ticket: ticket,
+                             ..quicr::ClientConfig::default()
+                         })?
+            .map_err(|e| format_err!("failed to connect: {}", e))
+            .and_then(move |conn| {
+                eprintln!("connected at {}", duration_secs(&start.elapsed()));
+                /*
+we don't bother with a session_path
+                if let Some(path) = session_path.take() {
+                    current_thread::spawn(conn.session_tickets.map_err(|_| ()).for_each(move |data| {
+                        if let Err(e) = fs::write(&path, &data) {
+                            error!("failed to write session: {}", e.to_string());
+                        } else {
+                            info!("wrote {}B session", data.len());
+                        }
+                        Ok(())
+                    }));
+                }
 */
+                let conn = conn.connection;
+                let stream = conn.open_bi();
+                stream.map_err(|e| format_err!("failed to open stream: {}", e))
+                    .and_then(move |stream| {
+                        eprintln!("stream opened at {}", duration_secs(&start.elapsed()));
+                        tokio::io::write_all(stream, serialized_message).map_err(|e| format_err!("failed to send request: {}", e))
+                    })
+                    .and_then(|(stream, _)| tokio::io::shutdown(stream).map_err(|e| format_err!("failed to shutdown stream: {}", e)))
+                    .and_then(move |stream| {
+                        let response_start = Instant::now();
+                        eprintln!("request sent at {}", duration_secs(&(response_start - start)));
+                        quicr::read_to_end(stream, usize::max_value()).map_err(|e| format_err!("failed to read response: {}", e))
+                            .map(move |x| (x, response_start))
+                    })
+                    .and_then(move |((_, data), response_start)| {
+                        let seconds = duration_secs(&response_start.elapsed());
+                        eprintln!("response received in {} - {} KiB/s", seconds, data.len() as f32 / (seconds * 1024.0));
+                        let msg: ::std::result::Result<Message, rmp_serde::decode::Error> = rmp_serde::from_slice(&data);
+                        debug!("Got response: {:?}", msg);
+                        //io::stdout().write_all(&data).unwrap();
+                        //io::stdout().flush().unwrap();
+                        conn.close(0, b"done").map_err(|_| unreachable!())
+                    })
+                    .map(|()| eprintln!("drained"))
+            })
+    )?;
+
     Ok(())
 }
 
