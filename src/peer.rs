@@ -90,12 +90,17 @@ impl Peer {
         // For now we always listen...
         // Server opts is kinda a narsty placeholder.
 
-        // Start each the client and server futures.
-        Self::start_server(&mut self.runtime, self.options.listen_port)?;
+        println!("Bootstrap peer: {:?}", self.options.bootstrap_peer);
         if let Some(ref bootstrap_peer) = self.options.bootstrap_peer {
             let addr = bootstrap_peer.parse()?;
+            info!("Attempting to talk to {}", addr);
             Self::start_client(&mut self.runtime, addr)?;
         }
+
+        // Start each the client and server futures.
+        info!("Starting server on port {}", self.options.listen_port);
+        Self::start_server(&mut self.runtime, self.options.listen_port)?;
+
         // Block on futures and run them to completion.
         self.runtime.run().map_err(Error::from)
     }
@@ -219,12 +224,10 @@ impl Peer {
             .context("failed to generate certificate")?;
 
         //let (_endpoint, driver, incoming) = builder.bind("[::]:4433")?;
-        let (_endpoint, driver, incoming) = builder.bind(("[::]", listen_port))?;
+        let sockaddr: SocketAddr = SocketAddr::from(([0, 0, 0, 0], listen_port));
+        let (_endpoint, driver, incoming) = builder.bind(sockaddr)?;
 
-        info!(
-            "Bound to port {}, listening for incoming connections.",
-            listen_port
-        );
+        info!("Bound to {}, listening for incoming connections.", sockaddr);
 
         runtime.spawn(incoming.for_each(move |conn| {
             let quicr::NewConnection {
