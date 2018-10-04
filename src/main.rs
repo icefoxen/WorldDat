@@ -23,7 +23,6 @@ extern crate serde_derive;
 #[macro_use]
 extern crate lazy_static;
 
-use std::path::PathBuf;
 use structopt::StructOpt;
 
 mod peer;
@@ -76,43 +75,10 @@ pub struct PeerOpt {
 */
 }
 
-#[derive(StructOpt, Debug)]
-pub struct ServerOpt {
-    // /// directory to serve files from
-    //#[structopt(parse(from_os_str))]
-    //root: PathBuf,
-    /// TLS private key in PEM format
-    #[structopt(
-        parse(from_os_str),
-        short = "k",
-        long = "key",
-        requires = "cert"
-    )]
-    key: Option<PathBuf>,
-    /// TLS certificate in PEM format
-    #[structopt(
-        parse(from_os_str),
-        short = "c",
-        long = "cert",
-        requires = "key"
-    )]
-    cert: Option<PathBuf>,
-}
-
-#[derive(StructOpt, Debug)]
-enum Opt {
-    #[structopt(name = "server")]
-    Server(ServerOpt),
-    #[structopt(name = "client")]
-    Client,
-    #[structopt(name = "peer")]
-    Peer(PeerOpt),
-}
-
 fn main() {
     setup_logging();
     let opt = PeerOpt::from_args();
     let mut peer = peer::Peer::new(opt);
-    peer.run();
+    peer.run().expect("Peer did not exit successfully?");
     ::std::process::exit(0);
 }
