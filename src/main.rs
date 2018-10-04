@@ -1,4 +1,4 @@
-extern crate quicr;
+extern crate quinn;
 extern crate tokio;
 extern crate tokio_io;
 #[macro_use]

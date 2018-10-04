@@ -4,9 +4,9 @@ use std::result;
 use std::str;
 use std::time::{Duration, Instant};
 
-use failure::{self, Error, ResultExt};
+use failure::{self, Error};
 use futures::{Future, Stream};
-use quicr;
+use quinn;
 use rmp_serde;
 use tokio;
 use tokio::runtime::current_thread;
@@ -25,7 +25,7 @@ fn duration_secs(x: &Duration) -> f32 {
     x.as_secs() as f32 + x.subsec_nanos() as f32 * 1e-9
 }
 
-fn run_ping(stream: quicr::Stream) -> impl Future<Item = (), Error = ()> {
+fn run_ping(stream: quinn::Stream) -> impl Future<Item = (), Error = ()> {
     info!("Trying to send ping");
     let message = Message::Ping { id: 999 };
     let serialized_message = rmp_serde::to_vec(&message).expect("Could not serialize message?!");
@@ -38,9 +38,9 @@ fn run_ping(stream: quicr::Stream) -> impl Future<Item = (), Error = ()> {
         })
 */
         .and_then(move |(mut stream, _v)| {
-            stream.flush().unwrap();
+            stream.flush().expect("Could not flush stream?");
             info!("Sent, reading?");
-            quicr::read_to_end(stream, 1024*64)
+            quinn::read_to_end(stream, 1024*64)
                 .map_err(|e| warn!("failed to read response: {}", e))
         })
         .and_then(move |(stream, req)| {
@@ -50,7 +50,7 @@ fn run_ping(stream: quicr::Stream) -> impl Future<Item = (), Error = ()> {
                 Ok(Message::Ping{id}) => {
                     info!("Trying to send pong");
                     let message = Message::Pong{id};
-                    rmp_serde::to_vec(&message).unwrap()
+                    rmp_serde::to_vec(&message).expect("Could not serialize message; should never happen!")
                 },
                 Ok(val) => {
                     info!("Got message: {:?}, not doing anything with it", val);
@@ -106,7 +106,7 @@ impl Peer {
     }
 
     pub fn handle_new_client_connection(
-        conn: quicr::NewClientConnection,
+        conn: quinn::NewClientConnection,
         start: Instant,
     ) -> impl Future<Item = (), Error = failure::Error> {
         let message = Message::Ping { id: 999 };
@@ -131,7 +131,7 @@ impl Peer {
                     "request sent at {}",
                     duration_secs(&(response_start - start))
                 );
-                quicr::read_to_end(stream, usize::max_value())
+                quinn::read_to_end(stream, usize::max_value())
                     .map_err(|e| format_err!("failed to read response: {}", e))
                     .map(move |x| (x, response_start))
             }).and_then(move |((_, data), response_start)| {
@@ -149,14 +149,13 @@ impl Peer {
     }
 
     pub fn start_client(runtime: &mut Runtime, bootstrap_peer: SocketAddr) -> Result<()> {
-        let config = quicr::Config {
-            protocols: vec![b"hq-11"[..].into()],
-            keylog: None,
-            ..quicr::Config::default()
+        let config = quinn::Config {
+            // protocols: vec![b"hq-11"[..].into()],
+            // keylog: None,
+            ..quinn::Config::default()
         };
 
-        let ticket = None;
-        let mut builder = quicr::Endpoint::new();
+        let mut builder = quinn::Endpoint::new();
         builder.config(config);
         let (endpoint, driver, _incoming) = builder.bind("[::]:0")?;
         runtime.spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
@@ -166,14 +165,9 @@ impl Peer {
         let future = endpoint
             .connect(
                 &bootstrap_peer,
-                quicr::ClientConfig {
-                    server_name: Some("localhost:4433"),
-                    accept_insecure_certs: true,
-                    session_ticket: ticket,
-                    ..quicr::ClientConfig::default()
-                },
+                "localhost"
             )?.map_err(|e| error!("failed to connect: {}", e))
-            .and_then(move |conn: quicr::NewClientConnection| {
+            .and_then(move |conn: quinn::NewClientConnection| {
                 let x = Self::handle_new_client_connection(conn, start).map_err(|e| {
                     error!("Error handling client connection: {}", e);
                 });
@@ -185,13 +179,11 @@ impl Peer {
     }
 
     pub fn start_server(runtime: &mut Runtime, listen_port: u16) -> Result<()> {
-        let mut builder = quicr::Endpoint::new();
+        let mut builder = quinn::Endpoint::new();
         builder
-            .config(quicr::Config {
-                protocols: vec![b"hq-11"[..].into()],
+            .config(quinn::Config {
                 max_remote_bi_streams: 64,
-                keylog: None,
-                ..quicr::Config::default()
+                ..quinn::Config::default()
             }).listen();
 
         /*
@@ -219,9 +211,9 @@ impl Peer {
                 .generate_insecure_certificate()
                 .context("failed to generate certificate")?;
     }*/
-        builder
-            .generate_insecure_certificate()
-            .context("failed to generate certificate")?;
+        // builder
+        //     .generate_insecure_certificate()
+        //     .context("failed to generate certificate")?;
 
         //let (_endpoint, driver, incoming) = builder.bind("[::]:4433")?;
         let sockaddr: SocketAddr = SocketAddr::from(([0, 0, 0, 0], listen_port));
@@ -230,7 +222,7 @@ impl Peer {
         info!("Bound to {}, listening for incoming connections.", sockaddr);
 
         runtime.spawn(incoming.for_each(move |conn| {
-            let quicr::NewConnection {
+            let quinn::NewConnection {
                 incoming,
                 connection,
             } = conn;
@@ -245,8 +237,8 @@ impl Peer {
                 .for_each(move |stream| {
                     info!("Processing stream");
                     let stream = match stream {
-                        quicr::NewStream::Bi(stream) => stream,
-                        quicr::NewStream::Uni(_) => {
+                        quinn::NewStream::Bi(stream) => stream,
+                        quinn::NewStream::Uni(_) => {
                             error!("client opened unidirectional stream");
                             return Ok(());
                         }
@@ -285,7 +277,7 @@ mod tests {
                     listen_port: 4433,
                 });
 
-                peer.run().unwrap();
+                peer.run().expect("Could not run peer?");
                 Ok(())
             })
         };
@@ -301,7 +293,7 @@ mod tests {
             listen_port: 4434,
         });
 
-        let bootstrap_peer = "[::]:4433".parse().unwrap();
+        let bootstrap_peer = "[::]:4433".parse().expect("Could not create bootstrap address...");
         let res = peer::Peer::start_client(&mut peer.runtime, bootstrap_peer);
         assert!(res.is_ok())
     }

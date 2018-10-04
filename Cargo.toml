@@ -4,7 +4,8 @@ version = "0.1.0"
 authors = ["Simon Heath <icefoxen@gmail.com>"]
 
 [dependencies]
-quicr = "0.4"
+#quicr = "0.4"
+quinn = "0.1"
 tokio = "0.1"
 tokio-io = "0.1"
 failure = "0.1"

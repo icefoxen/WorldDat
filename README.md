@@ -10,9 +10,8 @@ Inspirations: ipfs, BitTorrent, dat, secure scuttlebutt, ...
 
 To build (on Debian):
 
- * Install `nix`
- * Run `nix-shell` in this directory.  That will build and patch the right version of OpenSSL if necessary and start a shell with it
-   available.
+ * Install `nix` from <https://nixos.org/nix/>
+ * Run `nix-shell` in the root directory of the project.  That will build and patch the right version of OpenSSL if necessary and start a shell with it available.
   * If you've installed nix without a debian package or such it may just update your ~/.bash_profile; you might need to twiddle env vars
     if you're using fish or such.
  * `cargo build`
