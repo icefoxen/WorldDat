@@ -5,7 +5,6 @@ authors = ["Simon Heath <icefoxen@gmail.com>"]
 
 [dependencies]
 quicr = "0.4"
-bytes = "0.4"
 tokio = "0.1"
 tokio-io = "0.1"
 failure = "0.1"

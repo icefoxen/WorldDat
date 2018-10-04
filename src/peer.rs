@@ -4,7 +4,7 @@ use std::result;
 use std::str::{self, FromStr};
 use std::time::{Duration, Instant};
 
-use failure::{Error, ResultExt};
+use failure::{self, Error, ResultExt};
 use futures::{Future, Stream};
 use quicr;
 use rmp_serde;
@@ -72,7 +72,7 @@ fn run_ping(stream: quicr::Stream) -> impl Future<Item = (), Error = ()> {
         })
         .map(move |_| info!("request complete"))
 }
-
+/*
 pub fn run_client() -> Result<()> {
     let remote =
         ::std::net::SocketAddr::from_str("127.0.0.1:4433").expect("Invalid url for client");
@@ -202,7 +202,6 @@ pub fn run_server(options: ServerOpt) -> Result<()> {
             connection.remote_address(),
             connection.protocol()
         );
-        //let root = root.clone();
         current_thread::spawn(
             incoming
                 .map_err(move |e| info!("connection terminated: {}", e))
@@ -226,6 +225,198 @@ pub fn run_server(options: ServerOpt) -> Result<()> {
 
     Ok(())
 }
+*/
+/// All peer state stuff.
+pub struct Peer {
+    options: PeerOpt,
+    runtime: Runtime,
+}
+
+impl Peer {
+    pub fn new(options: PeerOpt) -> Self {
+        let mut runtime = Runtime::new().expect("Could not create runtime");
+        Peer { options, runtime }
+    }
+
+    /// Actually starts the node, blocking the current therad.
+    pub fn run(&mut self) -> Result<()> {
+        // For now we always listen...
+        // Server opts is kinda a narsty placeholder.
+        let server_opts = ServerOpt {
+            key: None,
+            cert: None,
+        };
+        // Start each the client and server futures.
+        Self::run_server(&mut self.runtime, server_opts);
+        Self::run_client(&mut self.runtime);
+        // Block on futures and run them to completion.
+        self.runtime.run().map_err(Error::from)
+    }
+
+    pub fn handle_new_client_connection(
+        conn: quicr::NewClientConnection,
+        start: Instant,
+    ) -> impl Future<Item = (), Error = failure::Error> {
+        let message = Message::Ping { id: 999 };
+        let serialized_message =
+            rmp_serde::to_vec(&message).expect("Could not serialize message?!");
+
+        info!("connected at {}", duration_secs(&start.elapsed()));
+        let conn = conn.connection;
+        let stream = conn.open_bi();
+        stream
+            .map_err(|e| format_err!("failed to open stream: {}", e))
+            .and_then(move |stream| {
+                info!("stream opened at {}", duration_secs(&start.elapsed()));
+                tokio::io::write_all(stream, serialized_message)
+                    .map_err(|e| format_err!("failed to send request: {}", e))
+            }).and_then(|(stream, _)| {
+                tokio::io::shutdown(stream)
+                    .map_err(|e| format_err!("failed to shutdown stream: {}", e))
+            }).and_then(move |stream| {
+                let response_start = Instant::now();
+                info!(
+                    "request sent at {}",
+                    duration_secs(&(response_start - start))
+                );
+                quicr::read_to_end(stream, usize::max_value())
+                    .map_err(|e| format_err!("failed to read response: {}", e))
+                    .map(move |x| (x, response_start))
+            }).and_then(move |((_, data), response_start)| {
+                let seconds = duration_secs(&response_start.elapsed());
+                info!(
+                    "response received in {}ms - {} KiB/s",
+                    response_start.elapsed().subsec_millis(),
+                    data.len() as f32 / (seconds * 1024.0)
+                );
+                let msg: ::std::result::Result<Message, rmp_serde::decode::Error> =
+                    rmp_serde::from_slice(&data);
+                debug!("Got response: {:?}", msg);
+                conn.close(0, b"done").map_err(|_| unreachable!())
+            }).map(|()| info!("drained"))
+    }
+
+    pub fn run_client(runtime: &mut Runtime) -> Result<()> {
+        let remote =
+            ::std::net::SocketAddr::from_str("127.0.0.1:4433").expect("Invalid url for client");
+
+        let config = quicr::Config {
+            protocols: vec![b"hq-11"[..].into()],
+            keylog: None,
+            ..quicr::Config::default()
+        };
+
+        let ticket = None;
+        let mut builder = quicr::Endpoint::new();
+        builder.config(config);
+        let (endpoint, driver, _) = builder.bind("[::]:0")?;
+        runtime.spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
+
+        let message = Message::Ping { id: 999 };
+        let serialized_message =
+            rmp_serde::to_vec(&message).expect("Could not serialize message?!");
+
+        let start = Instant::now();
+
+        let future: Box<Future<Item = (), Error = ()>> = Box::new(
+            endpoint
+                .connect(
+                    &remote,
+                    quicr::ClientConfig {
+                        server_name: Some("localhost:4433"),
+                        accept_insecure_certs: true,
+                        session_ticket: ticket,
+                        ..quicr::ClientConfig::default()
+                    },
+                )?.map_err(|e| error!("failed to connect: {}", e))
+                .and_then(move |conn: quicr::NewClientConnection| {
+                    let x = Self::handle_new_client_connection(conn, start).map_err(|e| {
+                        error!("Error handling client connection: {}", e);
+                    });
+                    x
+                }),
+        );
+
+        // TODO: This should spawn, not block.
+        // For that we need the future to have an error type of ()
+        // and that doesn't... seem to be happening.
+        runtime.spawn(future);
+        Ok(())
+    }
+
+    pub fn run_server(runtime: &mut Runtime, options: ServerOpt) -> Result<()> {
+        let mut builder = quicr::Endpoint::new();
+        builder
+            .config(quicr::Config {
+                protocols: vec![b"hq-11"[..].into()],
+                max_remote_bi_streams: 64,
+                keylog: None,
+                ..quicr::Config::default()
+            }).listen();
+
+        if let Some(key_path) = options.key {
+            let mut key = Vec::new();
+            File::open(&key_path)
+                .context("failed to open private key")?
+                .read_to_end(&mut key)
+                .context("failed to read private key")?;
+            builder
+                .private_key_pem(&key)
+                .context("failed to load private key")?;
+
+            let cert_path = options.cert.unwrap(); // Ensured present by option parsing
+            let mut cert = Vec::new();
+            File::open(&cert_path)
+                .context("failed to open certificate")?
+                .read_to_end(&mut cert)
+                .context("failed to read certificate")?;
+            builder
+                .certificate_pem(&cert)
+                .context("failed to load certificate")?;
+        } else {
+            builder
+                .generate_insecure_certificate()
+                .context("failed to generate certificate")?;
+        }
+
+        let (_endpoint, driver, incoming) = builder.bind("[::]:4433")?;
+
+        info!("Bound to port 4433, listening for incoming connections.");
+
+        runtime.spawn(incoming.for_each(move |conn| {
+            let quicr::NewConnection {
+                incoming,
+                connection,
+            } = conn;
+            info!(
+                "got connection: {}, {}, {:?}",
+                connection.remote_id(),
+                connection.remote_address(),
+                connection.protocol()
+            );
+            let connection_handle_future = incoming
+                .map_err(move |e| info!("connection terminated: {}", e))
+                .for_each(move |stream| {
+                    info!("Processing stream");
+                    let stream = match stream {
+                        quicr::NewStream::Bi(stream) => stream,
+                        quicr::NewStream::Uni(_) => {
+                            error!("client opened unidirectional stream");
+                            return Ok(());
+                        }
+                    };
+                    current_thread::spawn(run_ping(stream));
+                    Ok(())
+                });
+
+            current_thread::spawn(connection_handle_future);
+            Ok(())
+        }));
+
+        runtime.block_on(driver)?;
+        Ok(())
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -236,20 +427,35 @@ mod tests {
     use lazy_static;
 
     use peer;
-    use ServerOpt;
+    use {PeerOpt, ServerOpt};
 
-    // This isn't necessarily the best way to do this but
+    // This isn't necessarily the best way to do this, but...
     lazy_static! {
-        static ref SERVER_THREAD: thread::JoinHandle<Result<(), failure::Error>> =
-            thread::spawn(|| peer::run_server(ServerOpt {
-                key: None,
-                cert: None,
-            }));
+        static ref SERVER_THREAD: thread::JoinHandle<Result<(), failure::Error>> = {
+            thread::spawn(move || {
+                let mut peer = peer::Peer::new(PeerOpt {
+                    bootstrap_peer: None,
+                    listen_port: 4433,
+                });
+
+                peer.run();
+                Ok(())
+            })
+        };
     }
     #[test]
     fn test_client_connection() {
         lazy_static::initialize(&SERVER_THREAD);
-        let res = peer::run_client();
+
+        // TODO: Make sure it actually fails when no server is running!
+        use std::net::ToSocketAddrs;
+
+        let mut peer = peer::Peer::new(PeerOpt {
+            bootstrap_peer: Some(String::from("[::]:4433")),
+            listen_port: 4434,
+        });
+
+        let res = peer::Peer::run_client(&mut peer.runtime);
         assert!(res.is_ok())
     }
 }

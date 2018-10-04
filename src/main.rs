@@ -1,4 +1,3 @@
-extern crate bytes;
 extern crate quicr;
 extern crate tokio;
 extern crate tokio_io;
@@ -63,7 +62,9 @@ pub struct PeerOpt {
     bootstrap_peer: Option<String>,
 
     /// Port to listen on for incoming connections.
-    #[structopt(default_value = "4433", short = "p", long = "port")]
+    /// Currently we always listen but it would be nice to have
+    /// a fetch-only peer sometime.
+    #[structopt(short = "p", long = "port", default_value = "4433")]
     listen_port: u16,
     /*
     /// TLS private key in PEM format
@@ -110,35 +111,8 @@ enum Opt {
 
 fn main() {
     setup_logging();
-    let opt = Opt::from_args();
-    let code = {
-        match opt {
-            Opt::Server(s) => {
-                if let Err(e) = peer::run_server(s) {
-                    eprintln!("ERROR: {:?}", e);
-                    1
-                } else {
-                    0
-                }
-            }
-            Opt::Client => {
-                if let Err(e) = peer::run_client() {
-                    eprintln!("ERROR: {:?}", e);
-                    1
-                } else {
-                    0
-                }
-            }
-            Opt::Peer(_p) => {
-                0
-                /*
-                if let Err(e) = peer::run_peer(p) {
-                    eprintln!("ERROR: {}", e.cause());
-                    1
-                } else { 0 }
-                 */
-            }
-        }
-    };
-    ::std::process::exit(code);
+    let opt = PeerOpt::from_args();
+    let mut peer = peer::Peer::new(opt);
+    peer.run();
+    ::std::process::exit(0);
 }
