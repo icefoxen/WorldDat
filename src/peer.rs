@@ -83,7 +83,7 @@ impl Peer {
     /// Actually starts the node, blocking the current thread.
     pub fn run(&mut self) -> Result<()> {
         // For now we always listen...
-        println!("Bootstrap peer: {:?}", self.options.bootstrap_peer);
+        info!("Bootstrap peer: {:?}", self.options.bootstrap_peer);
         self.start_client()?;
 
         // Start each the client and server futures.
@@ -164,10 +164,9 @@ impl Peer {
                 .connect(&addr, "localhost")?
                 .map_err(|e| error!("failed to connect: {}", e))
                 .and_then(move |conn: quinn::NewClientConnection| {
-                    let x = Self::handle_new_client_connection(conn, start).map_err(|e| {
+                    Self::handle_new_client_connection(conn, start).map_err(|e| {
                         error!("Error handling client connection: {}", e);
-                    });
-                    x
+                    })
                 });
 
             self.runtime.spawn(future);
@@ -264,8 +263,8 @@ mod tests {
                     bootstrap_peer: None,
                     listen: "[::]:4433".to_socket_addrs().unwrap().next().unwrap(),
                     ca: None,
-                    key: "".into(),
-                    cert: "".into(),
+                    key: "certs/server.rsa".into(),
+                    cert: "certs/server.chain".into(),
                 });
 
                 peer.run().expect("Could not run peer?");
@@ -281,12 +280,12 @@ mod tests {
         let mut peer = peer::Peer::new(PeerOpt {
             bootstrap_peer: Some(url::Url::parse("quic://[::0]:4433/").unwrap()),
             listen: "[::]:4434".to_socket_addrs().unwrap().next().unwrap(),
-            ca: None,
-            key: "".into(),
-            cert: "".into(),
+            ca: Some("certs/ca.der".into()),
+            key: "certs/server.rsa".into(),
+            cert: "certs/server.chain".into(),
         });
 
         let res = peer.start_client();
-        assert!(res.is_ok())
+        assert!(res.is_ok());
     }
 }
