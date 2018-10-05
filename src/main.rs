@@ -12,9 +12,9 @@ extern crate chrono;
 #[macro_use]
 extern crate log;
 extern crate fern;
-
 extern crate rmp;
 extern crate rmp_serde;
+extern crate rustls;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
@@ -26,6 +26,7 @@ extern crate lazy_static;
 use structopt::StructOpt;
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 mod peer;
 
@@ -67,14 +68,18 @@ pub struct PeerOpt {
     /// a fetch-only peer sometime.
     #[structopt(short = "l", long = "listen", default_value = "[::]:4433")]
     listen: SocketAddr,
-    /*
+    #[structopt(parse(from_os_str), long = "ca")]
+    ca: Option<PathBuf>,
+
+    // TODO: External files here is not necessarily nicest for unit testing.
+    // ALSO TODO: Can we make them optional?  Not yet.
+    // weigh in on https://github.com/djc/quinn/issues/35 when sober.
     /// TLS private key in PEM format
-    #[structopt(parse(from_os_str), short = "k", long = "key", requires = "cert")]
-    key: Option<PathBuf>,
+    #[structopt(parse(from_os_str), short = "k", long = "key")]
+    key: PathBuf,
     /// TLS certificate in PEM format
-    #[structopt(parse(from_os_str), short = "c", long = "cert", requires = "key")]
-    cert: Option<PathBuf>,
-*/
+    #[structopt(parse(from_os_str), short = "c", long = "cert")]
+    cert: PathBuf,
 }
 
 fn main() {

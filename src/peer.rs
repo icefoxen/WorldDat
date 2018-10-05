@@ -1,17 +1,20 @@
-use std::io::Write;
+use std::fs;
+use std::io::{self, Write};
 use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
 use std::result;
 use std::str;
 use std::time::{Duration, Instant};
 
-use failure::{self, Error};
+use failure::{self, err_msg, Error, ResultExt};
 use futures::{Future, Stream};
 use quinn;
 use rmp_serde;
 use tokio;
 use tokio::runtime::current_thread;
 use tokio::runtime::current_thread::Runtime;
+
+use rustls::internal::pemfile;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 enum Message {
@@ -81,19 +84,11 @@ impl Peer {
     pub fn run(&mut self) -> Result<()> {
         // For now we always listen...
         println!("Bootstrap peer: {:?}", self.options.bootstrap_peer);
-        if let Some(ref bootstrap_peer) = self.options.bootstrap_peer {
-            let addr = bootstrap_peer
-                .with_default_port(|_| Ok(4433))?
-                .to_socket_addrs()?
-                .next()
-                .ok_or(format_err!("couldn't resolve bootstrap peer to an address"))?;
-            info!("Attempting to talk to {}", addr);
-            Self::start_client(&mut self.runtime, addr)?;
-        }
+        self.start_client()?;
 
         // Start each the client and server futures.
         info!("Starting server on {}", self.options.listen);
-        Self::start_server(&mut self.runtime, self.options.listen)?;
+        self.start_server()?;
 
         // Block on futures and run them to completion.
         self.runtime.run().map_err(Error::from)
@@ -142,33 +137,46 @@ impl Peer {
             }).map(|()| info!("drained"))
     }
 
-    pub fn start_client(runtime: &mut Runtime, bootstrap_peer: SocketAddr) -> Result<()> {
+    pub fn start_client(&mut self) -> Result<()> {
         let config = quinn::Config {
             ..quinn::Config::default()
         };
+        if let Some(ref bootstrap_peer) = self.options.bootstrap_peer {
+            let mut builder = quinn::Endpoint::new();
+            builder.config(config);
 
-        let mut builder = quinn::Endpoint::new();
-        builder.config(config);
-        let (endpoint, driver, _incoming) = builder.bind("[::]:0")?;
-        runtime.spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
+            if let Some(ref ca_path) = self.options.ca {
+                builder.set_certificate_authority(&fs::read(&ca_path)?)?;
+            }
+            let (endpoint, driver, _incoming) = builder.bind("[::]:0")?;
+            self.runtime
+                .spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
 
-        let start = Instant::now();
+            let start = Instant::now();
 
-        let future = endpoint
-            .connect(&bootstrap_peer, "localhost")?
-            .map_err(|e| error!("failed to connect: {}", e))
-            .and_then(move |conn: quinn::NewClientConnection| {
-                let x = Self::handle_new_client_connection(conn, start).map_err(|e| {
-                    error!("Error handling client connection: {}", e);
+            let addr = bootstrap_peer
+                .with_default_port(|_| Ok(4433))?
+                .to_socket_addrs()?
+                .next()
+                .ok_or(format_err!("couldn't resolve bootstrap peer to an address"))?;
+            info!("Attempting to talk to {}", addr);
+            let future = endpoint
+                .connect(&addr, "localhost")?
+                .map_err(|e| error!("failed to connect: {}", e))
+                .and_then(move |conn: quinn::NewClientConnection| {
+                    let x = Self::handle_new_client_connection(conn, start).map_err(|e| {
+                        error!("Error handling client connection: {}", e);
+                    });
+                    x
                 });
-                x
-            });
 
-        runtime.spawn(future);
+            self.runtime.spawn(future);
+        }
+
         Ok(())
     }
 
-    pub fn start_server(runtime: &mut Runtime, listen: SocketAddr) -> Result<()> {
+    pub fn start_server(&mut self) -> Result<()> {
         let mut builder = quinn::Endpoint::new();
         builder
             .config(quinn::Config {
@@ -176,11 +184,30 @@ impl Peer {
                 ..quinn::Config::default()
             }).listen();
 
-        let (_endpoint, driver, incoming) = builder.bind(listen)?;
+        // Mongle TLS keys
+        let keys = {
+            let mut reader = io::BufReader::new(
+                fs::File::open(&self.options.key).context("failed to read private key")?,
+            );
+            pemfile::rsa_private_keys(&mut reader)
+                .map_err(|_| err_msg("failed to read private key"))?
+        };
+        let cert_chain = {
+            let mut reader = io::BufReader::new(
+                fs::File::open(&self.options.cert).context("failed to read private key")?,
+            );
+            pemfile::certs(&mut reader).map_err(|_| err_msg("failed to read certificates"))?
+        };
+        builder.set_certificate(cert_chain, keys[0].clone())?;
 
-        info!("Bound to {}, listening for incoming connections.", listen);
+        let (_endpoint, driver, incoming) = builder.bind(self.options.listen)?;
 
-        runtime.spawn(incoming.for_each(move |conn| {
+        info!(
+            "Bound to {}, listening for incoming connections.",
+            self.options.listen
+        );
+
+        self.runtime.spawn(incoming.for_each(move |conn| {
             let quinn::NewConnection {
                 incoming,
                 connection,
@@ -211,7 +238,7 @@ impl Peer {
         }));
 
         // TODO: Is this block_on() what we actually want?
-        runtime.block_on(driver)?;
+        self.runtime.block_on(driver)?;
         Ok(())
     }
 }
@@ -236,6 +263,9 @@ mod tests {
                 let mut peer = peer::Peer::new(PeerOpt {
                     bootstrap_peer: None,
                     listen: "[::]:4433".to_socket_addrs().unwrap().next().unwrap(),
+                    ca: None,
+                    key: "".into(),
+                    cert: "".into(),
                 });
 
                 peer.run().expect("Could not run peer?");
@@ -251,19 +281,12 @@ mod tests {
         let mut peer = peer::Peer::new(PeerOpt {
             bootstrap_peer: Some(url::Url::parse("quic://[::0]:4433/").unwrap()),
             listen: "[::]:4434".to_socket_addrs().unwrap().next().unwrap(),
+            ca: None,
+            key: "".into(),
+            cert: "".into(),
         });
 
-        // grumble grumble neither Url nor SocketAddr is quite Right.
-        let peer_socketaddr = peer
-            .options
-            .bootstrap_peer
-            .unwrap()
-            .to_socket_addrs()
-            .unwrap()
-            .next()
-            .unwrap();
-
-        let res = peer::Peer::start_client(&mut peer.runtime, peer_socketaddr);
+        let res = peer.start_client();
         assert!(res.is_ok())
     }
 }
