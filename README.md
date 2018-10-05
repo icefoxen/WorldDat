@@ -10,12 +10,18 @@ Inspirations: ipfs, BitTorrent, dat, secure scuttlebutt, ...
 
 To build (on Debian):
 
- * Install `nix` from <https://nixos.org/nix/>
- * Run `nix-shell` in the root directory of the project.  That will build and patch the right version of OpenSSL if necessary and start a shell with it available.
-  * If you've installed nix without a debian package or such it may just update your ~/.bash_profile; you might need to twiddle env vars
-    if you're using fish or such.
+ * Install Rust, if it's not already installed.
+ * cd into the repo directory.
  * `cargo build`
 
+To run:
+
+ * Start a node with no bootstrap node: `cargo run`
+ * Start a node listening on a different port and tell it to use the existing one as a bootstrap node: `cargo run -- -l '[::]:5555' -b quic://127.0.0.1:4433`
+
+To test:
+
+ * `cargo test`
 
 ## To do
 

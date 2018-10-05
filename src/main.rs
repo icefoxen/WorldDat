@@ -25,6 +25,8 @@ extern crate lazy_static;
 
 use structopt::StructOpt;
 
+use std::net::SocketAddr;
+
 mod peer;
 
 fn setup_logging() {
@@ -58,13 +60,13 @@ fn setup_logging() {
 pub struct PeerOpt {
     /// Initial node to connect to
     #[structopt(short = "b", long = "bootstrap")]
-    bootstrap_peer: Option<String>,
+    bootstrap_peer: Option<url::Url>,
 
-    /// Port to listen on for incoming connections.
+    /// Address to listen on for incoming connections.
     /// Currently we always listen but it would be nice to have
     /// a fetch-only peer sometime.
-    #[structopt(short = "p", long = "port", default_value = "4433")]
-    listen_port: u16,
+    #[structopt(short = "l", long = "listen", default_value = "[::]:4433")]
+    listen: SocketAddr,
     /*
     /// TLS private key in PEM format
     #[structopt(parse(from_os_str), short = "k", long = "key", requires = "cert")]

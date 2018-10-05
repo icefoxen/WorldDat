@@ -1,5 +1,6 @@
 use std::io::Write;
 use std::net::SocketAddr;
+use std::net::ToSocketAddrs;
 use std::result;
 use std::str;
 use std::time::{Duration, Instant};
@@ -31,46 +32,37 @@ fn run_ping(stream: quinn::Stream) -> impl Future<Item = (), Error = ()> {
     let serialized_message = rmp_serde::to_vec(&message).expect("Could not serialize message?!");
     tokio::io::write_all(stream, serialized_message)
         .map_err(|e| warn!("Failed to send request: {}", e))
-        /*
-        .and_then(|(stream, _v)| {
-            tokio::io::shutdown(stream)
-                .map_err(|e| warn!("Failed to shut down stream: {}", e))
-        })
-*/
         .and_then(move |(mut stream, _v)| {
             stream.flush().expect("Could not flush stream?");
             info!("Sent, reading?");
-            quinn::read_to_end(stream, 1024*64)
+            quinn::read_to_end(stream, 1024 * 64)
                 .map_err(|e| warn!("failed to read response: {}", e))
-        })
-        .and_then(move |(stream, req)| {
-            let msg: ::std::result::Result<Message, rmp_serde::decode::Error> = rmp_serde::from_slice(&req);
+        }).and_then(move |(stream, req)| {
+            let msg: ::std::result::Result<Message, rmp_serde::decode::Error> =
+                rmp_serde::from_slice(&req);
             debug!("Got response: {:?}", msg);
             let to_send = match msg {
-                Ok(Message::Ping{id}) => {
+                Ok(Message::Ping { id }) => {
                     info!("Trying to send pong");
-                    let message = Message::Pong{id};
-                    rmp_serde::to_vec(&message).expect("Could not serialize message; should never happen!")
-                },
+                    let message = Message::Pong { id };
+                    rmp_serde::to_vec(&message)
+                        .expect("Could not serialize message; should never happen!")
+                }
                 Ok(val) => {
                     info!("Got message: {:?}, not doing anything with it", val);
                     vec![]
-                },
+                }
                 Err(e) => {
                     info!("Got unknown message: {:?}, error {:?}", &req, e);
                     vec![]
                 }
             };
 
-            //::std::thread::sleep(::std::time::Duration::from_millis(1000));
             tokio::io::write_all(stream, to_send)
                 .map_err(|e| warn!("Failed to send request: {}", e))
-        })
-        .and_then(|(stream, _)| {
-            tokio::io::shutdown(stream)
-                .map_err(|e| warn!("Failed to shut down stream: {}", e))
-        })
-        .map(move |_| info!("request complete"))
+        }).and_then(|(stream, _)| {
+            tokio::io::shutdown(stream).map_err(|e| warn!("Failed to shut down stream: {}", e))
+        }).map(move |_| info!("request complete"))
 }
 
 /// All peer state stuff.
@@ -85,21 +77,23 @@ impl Peer {
         Peer { options, runtime }
     }
 
-    /// Actually starts the node, blocking the current therad.
+    /// Actually starts the node, blocking the current thread.
     pub fn run(&mut self) -> Result<()> {
         // For now we always listen...
-        // Server opts is kinda a narsty placeholder.
-
         println!("Bootstrap peer: {:?}", self.options.bootstrap_peer);
         if let Some(ref bootstrap_peer) = self.options.bootstrap_peer {
-            let addr = bootstrap_peer.parse()?;
+            let addr = bootstrap_peer
+                .with_default_port(|_| Ok(4433))?
+                .to_socket_addrs()?
+                .next()
+                .ok_or(format_err!("couldn't resolve bootstrap peer to an address"))?;
             info!("Attempting to talk to {}", addr);
             Self::start_client(&mut self.runtime, addr)?;
         }
 
         // Start each the client and server futures.
-        info!("Starting server on port {}", self.options.listen_port);
-        Self::start_server(&mut self.runtime, self.options.listen_port)?;
+        info!("Starting server on {}", self.options.listen);
+        Self::start_server(&mut self.runtime, self.options.listen)?;
 
         // Block on futures and run them to completion.
         self.runtime.run().map_err(Error::from)
@@ -150,8 +144,6 @@ impl Peer {
 
     pub fn start_client(runtime: &mut Runtime, bootstrap_peer: SocketAddr) -> Result<()> {
         let config = quinn::Config {
-            // protocols: vec![b"hq-11"[..].into()],
-            // keylog: None,
             ..quinn::Config::default()
         };
 
@@ -163,10 +155,8 @@ impl Peer {
         let start = Instant::now();
 
         let future = endpoint
-            .connect(
-                &bootstrap_peer,
-                "localhost"
-            )?.map_err(|e| error!("failed to connect: {}", e))
+            .connect(&bootstrap_peer, "localhost")?
+            .map_err(|e| error!("failed to connect: {}", e))
             .and_then(move |conn: quinn::NewClientConnection| {
                 let x = Self::handle_new_client_connection(conn, start).map_err(|e| {
                     error!("Error handling client connection: {}", e);
@@ -178,7 +168,7 @@ impl Peer {
         Ok(())
     }
 
-    pub fn start_server(runtime: &mut Runtime, listen_port: u16) -> Result<()> {
+    pub fn start_server(runtime: &mut Runtime, listen: SocketAddr) -> Result<()> {
         let mut builder = quinn::Endpoint::new();
         builder
             .config(quinn::Config {
@@ -186,40 +176,9 @@ impl Peer {
                 ..quinn::Config::default()
             }).listen();
 
-        /*
-        if let Some(key_path) = options.key {
-            let mut key = Vec::new();
-            File::open(&key_path)
-                .context("failed to open private key")?
-                .read_to_end(&mut key)
-                .context("failed to read private key")?;
-            builder
-                .private_key_pem(&key)
-                .context("failed to load private key")?;
+        let (_endpoint, driver, incoming) = builder.bind(listen)?;
 
-            let cert_path = options.cert.unwrap(); // Ensured present by option parsing
-            let mut cert = Vec::new();
-            File::open(&cert_path)
-                .context("failed to open certificate")?
-                .read_to_end(&mut cert)
-                .context("failed to read certificate")?;
-            builder
-                .certificate_pem(&cert)
-                .context("failed to load certificate")?;
-        } else {
-            builder
-                .generate_insecure_certificate()
-                .context("failed to generate certificate")?;
-    }*/
-        // builder
-        //     .generate_insecure_certificate()
-        //     .context("failed to generate certificate")?;
-
-        //let (_endpoint, driver, incoming) = builder.bind("[::]:4433")?;
-        let sockaddr: SocketAddr = SocketAddr::from(([0, 0, 0, 0], listen_port));
-        let (_endpoint, driver, incoming) = builder.bind(sockaddr)?;
-
-        info!("Bound to {}, listening for incoming connections.", sockaddr);
+        info!("Bound to {}, listening for incoming connections.", listen);
 
         runtime.spawn(incoming.for_each(move |conn| {
             let quinn::NewConnection {
@@ -260,10 +219,12 @@ impl Peer {
 #[cfg(test)]
 mod tests {
 
+    use std::net::ToSocketAddrs;
     use std::thread;
 
     use failure;
     use lazy_static;
+    use url;
 
     use peer;
     use PeerOpt;
@@ -274,7 +235,7 @@ mod tests {
             thread::spawn(move || {
                 let mut peer = peer::Peer::new(PeerOpt {
                     bootstrap_peer: None,
-                    listen_port: 4433,
+                    listen: "[::]:4433".to_socket_addrs().unwrap().next().unwrap(),
                 });
 
                 peer.run().expect("Could not run peer?");
@@ -287,14 +248,22 @@ mod tests {
         lazy_static::initialize(&SERVER_THREAD);
 
         // TODO: Make sure it actually fails when no server is running!
-
         let mut peer = peer::Peer::new(PeerOpt {
-            bootstrap_peer: Some(String::from("[::]:4433")),
-            listen_port: 4434,
+            bootstrap_peer: Some(url::Url::parse("quic://[::0]:4433/").unwrap()),
+            listen: "[::]:4434".to_socket_addrs().unwrap().next().unwrap(),
         });
 
-        let bootstrap_peer = "[::]:4433".parse().expect("Could not create bootstrap address...");
-        let res = peer::Peer::start_client(&mut peer.runtime, bootstrap_peer);
+        // grumble grumble neither Url nor SocketAddr is quite Right.
+        let peer_socketaddr = peer
+            .options
+            .bootstrap_peer
+            .unwrap()
+            .to_socket_addrs()
+            .unwrap()
+            .next()
+            .unwrap();
+
+        let res = peer::Peer::start_client(&mut peer.runtime, peer_socketaddr);
         assert!(res.is_ok())
     }
 }
