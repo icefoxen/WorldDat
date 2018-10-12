@@ -87,5 +87,4 @@ fn main() {
     let opt = PeerOpt::from_args();
     let mut peer = peer::Peer::new(opt);
     peer.run().expect("Peer did not exit successfully?");
-    ::std::process::exit(0);
 }
