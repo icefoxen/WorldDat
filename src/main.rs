@@ -51,6 +51,8 @@ fn setup_logging() {
         .level(log::LevelFilter::Trace)
         .level_for("tokio_reactor", log::LevelFilter::Warn)
         .level_for("mio", log::LevelFilter::Warn)
+        .level_for("rustls", log::LevelFilter::Warn)
+
     // Hooks up console output.
         .chain(std::io::stdout())
         .apply()

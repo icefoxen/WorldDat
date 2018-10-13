@@ -134,7 +134,7 @@ impl Peer {
                     rmp_serde::from_slice(&data);
                 debug!("Got response: {:?}", msg);
                 conn.close(0, b"done").map_err(|_| unreachable!())
-            }).map(|()| info!("drained"))
+            }).map(|()| info!("connection closed"))
     }
 
     pub fn start_client(&mut self) -> Result<()> {
@@ -148,9 +148,9 @@ impl Peer {
             if let Some(ref ca_path) = self.options.ca {
                 builder.set_certificate_authority(&fs::read(&ca_path)?)?;
             }
-            let (endpoint, driver, _incoming) = builder.bind("[::]:0")?;
-            self.runtime
-                .spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
+            let (endpoint, driver, mut _incoming) = builder.bind("[::]:0")?;
+            // self.runtime
+            //     .spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
 
             let start = Instant::now();
 
@@ -159,17 +159,27 @@ impl Peer {
                 .to_socket_addrs()?
                 .next()
                 .ok_or(format_err!("couldn't resolve bootstrap peer to an address"))?;
-            info!("Attempting to talk to {}", addr);
-            let future = endpoint
-                .connect(&addr, "localhost")?
-                .map_err(|e| error!("failed to connect: {}", e))
-                .and_then(move |conn: quinn::NewClientConnection| {
-                    Self::handle_new_client_connection(conn, start).map_err(|e| {
-                        error!("Error handling client connection: {}", e);
-                    })
-                });
+            use futures::future;
+            let future: Box<dyn Future<Item = (), Error = ()>> = Box::new(
+                endpoint
+                    .connect(&addr, "localhost")?
+                    .map_err(|e| error!("failed to connect: {}", e))
+                    .and_then(move |conn: quinn::NewClientConnection| {
+                        debug!("Connection established");
+                        Self::handle_new_client_connection(conn, start).map_err(|e| {
+                            error!("Error handling client connection: {}", e);
+                        })
+                    }),
+            );
 
-            self.runtime.spawn(future);
+            let f: Box<dyn Future<Item = (), Error = ()>> = Box::new(
+                driver
+                    .map_err(|e| eprintln!("IO error: {}", e))
+                    .select(future),
+            );
+
+            self.runtime.spawn(f);
+            // self.runtime.spawn(future);
         }
 
         Ok(())
@@ -247,8 +257,9 @@ mod tests {
 
     use std::net::ToSocketAddrs;
     use std::thread;
+    use std::time::Duration;
 
-    use failure;
+    use failure::{self, Error};
     use lazy_static;
     use url;
 
@@ -257,28 +268,32 @@ mod tests {
 
     // This isn't necessarily the best way to do this, but...
     lazy_static! {
-        static ref SERVER_THREAD: thread::JoinHandle<Result<(), failure::Error>> = {
-            thread::spawn(move || {
-                let mut peer = peer::Peer::new(PeerOpt {
-                    bootstrap_peer: None,
-                    listen: "[::]:4433".to_socket_addrs().unwrap().next().unwrap(),
-                    ca: None,
-                    key: "certs/server.rsa".into(),
-                    cert: "certs/server.chain".into(),
-                });
+        // static ref SERVER_THREAD: thread::JoinHandle<Result<(), failure::Error>> = {
+        //     thread::spawn(move || {
+        //         let mut peer = peer::Peer::new(PeerOpt {
+        //             bootstrap_peer: None,
+        //             listen: "[::]:4433".to_socket_addrs().unwrap().next().unwrap(),
+        //             ca: None,
+        //             key: "certs/server.rsa".into(),
+        //             cert: "certs/server.chain".into(),
+        //         });
 
-                peer.run().expect("Could not run peer?");
-                Ok(())
-            })
-        };
+        //         peer.run().expect("Could not run peer?");
+        //         Ok(())
+        //     })
+        // };
     }
     #[test]
     fn test_client_connection() {
-        lazy_static::initialize(&SERVER_THREAD);
+        ::setup_logging();
+
+        // lazy_static::initialize(&SERVER_THREAD);
+
+        thread::sleep(Duration::from_millis(1000));
 
         // TODO: Make sure it actually fails when no server is running!
         let mut peer = peer::Peer::new(PeerOpt {
-            bootstrap_peer: Some(url::Url::parse("quic://[::0]:4433/").unwrap()),
+            bootstrap_peer: Some(url::Url::parse("quic://[::1]:4433/").unwrap()),
             listen: "[::]:4434".to_socket_addrs().unwrap().next().unwrap(),
             ca: Some("certs/ca.der".into()),
             key: "certs/server.rsa".into(),
@@ -286,6 +301,9 @@ mod tests {
         });
 
         let res = peer.start_client();
+
+        // Block on futures and run them to completion.
+        peer.runtime.run().map_err(Error::from).unwrap();
         assert!(res.is_ok());
     }
 }

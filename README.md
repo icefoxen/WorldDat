@@ -70,6 +70,14 @@ Operations:
  * Get peers: Get the peers that have the block (well, torrent) with a particular hash.  Takes the NodeID and the DataID.  Like find node, if the recipient doesn't know where to find the block, it will respond with a list of the closest nodes it does know.  BT also returns a token?
  * Announce peer: Announce that the peer is downloading a torrent.  Arguments: NodeID of querying node, DataID, port and token (from a previous get_peers).  The queryied node should then store the IP address and port of the sender as having access to that torrent.
 
+These are analogous to Kademila (ping, store, find node, find value).  So our operations are probably going to be quite similar:
+
+ * Ping
+ * Find node
+ * Find peers that have value
+ * Announce value
+
+
 ## References
 
  * [Bittorrent DHT](http://www.bittorrent.org/beps/bep_0005.html) (this one is by far the most complete and useful)
