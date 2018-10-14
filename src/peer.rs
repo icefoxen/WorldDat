@@ -1,7 +1,9 @@
+use std::cmp::Ordering;
 use std::fs;
 use std::io::{self, Write};
 use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
+use std::ops;
 use std::result;
 use std::str;
 use std::time::{Duration, Instant};
@@ -68,16 +70,162 @@ fn run_ping(stream: quinn::Stream) -> impl Future<Item = (), Error = ()> {
         }).map(move |_| info!("request complete"))
 }
 
+/// The number of bytes in a `Blake2Hash`.
+pub const BLAKE2_HASH_SIZE: usize = 64;
+
+/// A hash uniquely identifying a peer or data type, barring hash collisions.
+/// I'm not yet sure whether we want SHA256, SHA512 or something else
+/// (Blake2?  SHA-3?) so for now we leave room for future expansion.
+/// Expansion is hard though, since it means the address space and
+/// such changes size, so we don't really want to upgrade if we can avoid it.
+///
+/// I am advised that the best general-purpose choice is currently Blake2,
+/// since SHA3 is slow in software.
+///
+/// There's blake2s, which is 256 bits, and blake2b, which is 512.  We use
+/// blake2b, 'cause I see no reason not to.
+#[derive(Copy, Clone)]
+pub struct Blake2Hash(pub [u8; BLAKE2_HASH_SIZE]);
+
+impl PartialEq for Blake2Hash {
+    fn eq(&self, other: &Self) -> bool {
+        self.0[..] == other.0[..]
+    }
+}
+
+impl Eq for Blake2Hash {}
+
+impl PartialOrd for Blake2Hash {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Blake2Hash {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0[..].cmp(&other.0[..])
+    }
+}
+
+impl ops::BitXor for Blake2Hash {
+    type Output = Self;
+
+    fn bitxor(self, rhs: Self) -> Self {
+        // We could probably optimize this but heck it.
+        let mut out = [0; 64];
+        for i in 0..self.0.len() {
+            out[i] = self.0[i] ^ rhs.0[i];
+        }
+        Blake2Hash(out)
+    }
+}
+
+impl Blake2Hash {
+    /// The maximum power of 2 that the hash can hold.
+    /// In this case, 512 for Blake2b.
+    pub fn max_power() -> usize {
+        BLAKE2_HASH_SIZE * 8
+    }
+}
+
+/// A hash identifying a Peer.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PeerId(Blake2Hash);
+
+/// Contact info for a peer, mapping the `PeerId` to an IP address and port.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub struct ContactInfo {
+    peer_id: PeerId,
+    address: SocketAddr,
+}
+
+impl PartialOrd for ContactInfo {
+    /// Contact info is ordered by `peer_id`
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ContactInfo {
+    /// Contact info is ordered by `peer_id`
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.peer_id.cmp(&other.peer_id)
+    }
+}
+
+/// A "bucket" in the DHT, a collection of `ContactInfo`'s with
+/// a fixed max size.
+struct Bucket {
+    /// The peers in the bucket.
+    known_peers: Vec<ContactInfo>,
+    /// The min nad max address range of the bucket; it stores peers with ID's
+    /// in the range of `[2^min,2^max)`.
+    ///
+    /// TODO: u32 is way overkill here, but, KISS for now.
+    address_range: (u32, u32),
+}
+
+impl Bucket {
+    fn new(bucket_size: usize, min_address: u32, max_address: u32) -> Self {
+        assert!(min_address < max_address);
+        Self {
+            known_peers: Vec::with_capacity(bucket_size),
+            address_range: (min_address, max_address),
+        }
+    }
+}
+
+/// The peer's view of the DHT, a mapping of PeerId to contact info.
+/// As per Kademila and Bittorrent DHT, the further away from the peer's
+/// hash (as measured by the XOR distance metric), the lower resolution
+/// it is.
+pub struct PeerMap {
+    buckets: Vec<Bucket>,
+    /// The maximum number of peers per bucket.
+    /// Currently hardwired at 8 in `new()`, but there's no reason we wouldn't
+    /// want the ability to fiddle with it at runtime.
+    bucket_size: usize,
+}
+
+impl PeerMap {
+    pub fn new() -> Self {
+        let bucket_size = 8;
+        let initial_bucket = Bucket::new(bucket_size, 0, Blake2Hash::max_power() as u32);
+        Self {
+            buckets: vec![initial_bucket],
+            bucket_size,
+        }
+    }
+
+    /// Insert a new peer into the PeerMap,
+    ///
+    /// TODO: Should return an error or something if doing so
+    /// would need to evict a current peer; that should be based
+    /// on peer quality measures we don't track yet.
+    ///
+    /// For now though, we don't even bother splitting buckets or such.
+    pub fn insert(&mut self, new_peer: ContactInfo) {
+        self.buckets[0].known_peers.push(new_peer);
+        self.buckets[0].known_peers.sort();
+    }
+}
+
 /// All peer state stuff.
 pub struct Peer {
     options: PeerOpt,
     runtime: Runtime,
+    peermap: PeerMap,
 }
 
 impl Peer {
     pub fn new(options: PeerOpt) -> Self {
+        let peermap = PeerMap::new();
         let runtime = Runtime::new().expect("Could not create runtime");
-        Peer { options, runtime }
+        Peer {
+            options,
+            runtime,
+            peermap,
+        }
     }
 
     /// Actually starts the node, blocking the current thread.
@@ -94,6 +242,8 @@ impl Peer {
         self.runtime.run().map_err(Error::from)
     }
 
+    /// Creates a future that does all the communication stuff needed
+    /// to talk to a new connection.
     pub fn handle_new_client_connection(
         conn: quinn::NewClientConnection,
         start: Instant,
@@ -137,6 +287,8 @@ impl Peer {
             }).map(|()| info!("connection closed"))
     }
 
+    /// Starts the client, spawning it on this `Peer`'s
+    /// runtime.  Use `peer.runtime.run()` to actually drive it.
     pub fn start_client(&mut self) -> Result<()> {
         let config = quinn::Config {
             ..quinn::Config::default()
@@ -174,8 +326,6 @@ impl Peer {
             let future2: Box<dyn Future<Item = (), Error = ()>> =
                 Box::new(driver.map_err(|e| eprintln!("IO error: {}", e)));
 
-            use futures::*;
-
             // This too half a fucking hour to figure out,
             // after I'd already been told the answer.
             // select() returns a future that yields a tuple
@@ -190,7 +340,6 @@ impl Peer {
             );
 
             self.runtime.spawn(v);
-            // self.runtime.spawn(future);
         }
 
         Ok(())

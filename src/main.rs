@@ -8,6 +8,7 @@ extern crate futures;
 extern crate structopt;
 extern crate url;
 
+extern crate blake2;
 extern crate chrono;
 #[macro_use]
 extern crate log;
