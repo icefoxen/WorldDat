@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::fmt;
 use std::fs;
 use std::io::{self, Write};
 use std::net::SocketAddr;
@@ -8,20 +9,23 @@ use std::result;
 use std::str;
 use std::time::{Duration, Instant};
 
+use blake2;
 use failure::{self, err_msg, Error, ResultExt};
 use futures::{Future, Stream};
 use quinn;
 use rmp_serde;
+use serde;
 use tokio;
 use tokio::runtime::current_thread;
 use tokio::runtime::current_thread::Runtime;
 
 use rustls::internal::pemfile;
 
+/// The actual serializable messages that can be sent back and forth.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 enum Message {
-    Ping { id: u32 },
-    Pong { id: u32 },
+    Ping { id: PeerId },
+    Pong { id: PeerId },
 }
 
 use PeerOpt;
@@ -31,9 +35,9 @@ fn duration_secs(x: &Duration) -> f32 {
     x.as_secs() as f32 + x.subsec_nanos() as f32 * 1e-9
 }
 
-fn run_ping(stream: quinn::Stream) -> impl Future<Item = (), Error = ()> {
+fn run_ping(id: PeerId, stream: quinn::Stream) -> impl Future<Item = (), Error = ()> {
     info!("Trying to send ping");
-    let message = Message::Ping { id: 999 };
+    let message = Message::Ping { id };
     let serialized_message = rmp_serde::to_vec(&message).expect("Could not serialize message?!");
     tokio::io::write_all(stream, serialized_message)
         .map_err(|e| warn!("Failed to send request: {}", e))
@@ -87,6 +91,12 @@ pub const BLAKE2_HASH_SIZE: usize = 64;
 #[derive(Copy, Clone)]
 pub struct Blake2Hash(pub [u8; BLAKE2_HASH_SIZE]);
 
+impl fmt::Debug for Blake2Hash {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "B{:?}", &self.0[..])
+    }
+}
+
 impl PartialEq for Blake2Hash {
     fn eq(&self, other: &Self) -> bool {
         self.0[..] == other.0[..]
@@ -112,7 +122,7 @@ impl ops::BitXor for Blake2Hash {
 
     fn bitxor(self, rhs: Self) -> Self {
         // We could probably optimize this but heck it.
-        let mut out = [0; 64];
+        let mut out = [0; BLAKE2_HASH_SIZE];
         for i in 0..self.0.len() {
             out[i] = self.0[i] ^ rhs.0[i];
         }
@@ -120,7 +130,56 @@ impl ops::BitXor for Blake2Hash {
     }
 }
 
+/// An annoying struct for deserializing hashes.
+struct Blake2HashVisitor;
+
+impl<'a> serde::de::Visitor<'a> for Blake2HashVisitor {
+    type Value = Blake2Hash;
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        write!(formatter, "Expecting byte array.")
+    }
+
+    fn visit_bytes<E>(self, value: &[u8]) -> ::std::result::Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        let mut out = [0; BLAKE2_HASH_SIZE];
+        // TODO: This may panic?
+        out[..].copy_from_slice(value);
+        Ok(Blake2Hash(out))
+    }
+}
+
+impl serde::Serialize for Blake2Hash {
+    fn serialize<S>(&self, serializer: S) -> ::std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.0[..].serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Blake2Hash {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_bytes(Blake2HashVisitor)
+    }
+}
+
 impl Blake2Hash {
+    /// Create a new hash from the given seed data.
+    pub fn new(seed: &[u8]) -> Self {
+        use blake2::digest::{FixedOutput, Input};
+        let mut hasher = blake2::Blake2b::default();
+        hasher.input(seed);
+        let res = hasher.fixed_result();
+        let mut out = [0; BLAKE2_HASH_SIZE];
+        out[..].copy_from_slice(res.as_slice());
+        Blake2Hash(out)
+    }
+
     /// The maximum power of 2 that the hash can hold.
     /// In this case, 512 for Blake2b.
     pub fn max_power() -> usize {
@@ -129,7 +188,7 @@ impl Blake2Hash {
 }
 
 /// A hash identifying a Peer.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct PeerId(Blake2Hash);
 
 /// Contact info for a peer, mapping the `PeerId` to an IP address and port.
@@ -212,6 +271,7 @@ impl PeerMap {
 
 /// All peer state stuff.
 pub struct Peer {
+    id: PeerId,
     options: PeerOpt,
     runtime: Runtime,
     peermap: PeerMap,
@@ -221,7 +281,10 @@ impl Peer {
     pub fn new(options: PeerOpt) -> Self {
         let peermap = PeerMap::new();
         let runtime = Runtime::new().expect("Could not create runtime");
+        let id_seed: [u8; 64] = [0; 64];
+        let id = PeerId(Blake2Hash::new(&id_seed));
         Peer {
+            id,
             options,
             runtime,
             peermap,
@@ -245,10 +308,11 @@ impl Peer {
     /// Creates a future that does all the communication stuff needed
     /// to talk to a new connection.
     pub fn handle_new_client_connection(
+        id: PeerId,
         conn: quinn::NewClientConnection,
         start: Instant,
     ) -> impl Future<Item = (), Error = failure::Error> {
-        let message = Message::Ping { id: 999 };
+        let message = Message::Ping { id };
         let serialized_message =
             rmp_serde::to_vec(&message).expect("Could not serialize message?!");
 
@@ -311,13 +375,15 @@ impl Peer {
                 .to_socket_addrs()?
                 .next()
                 .ok_or(format_err!("couldn't resolve bootstrap peer to an address"))?;
+            // Copy self.id to move into closure
+            let id = self.id;
             let future1: Box<dyn Future<Item = (), Error = ()>> = Box::new(
                 endpoint
                     .connect(&addr, "localhost")?
                     .map_err(|e| error!("failed to connect: {}", e))
                     .and_then(move |conn: quinn::NewClientConnection| {
                         debug!("Connection established");
-                        Self::handle_new_client_connection(conn, start).map_err(|e| {
+                        Self::handle_new_client_connection(id, conn, start).map_err(|e| {
                             error!("Error handling client connection: {}", e);
                         })
                     }),
@@ -375,6 +441,8 @@ impl Peer {
             "Bound to {}, listening for incoming connections.",
             self.options.listen
         );
+        // Copy self.id to move into closure
+        let id = self.id;
 
         self.runtime.spawn(incoming.for_each(move |conn| {
             let quinn::NewConnection {
@@ -398,7 +466,7 @@ impl Peer {
                             return Ok(());
                         }
                     };
-                    current_thread::spawn(run_ping(stream));
+                    current_thread::spawn(run_ping(id, stream));
                     Ok(())
                 });
 
