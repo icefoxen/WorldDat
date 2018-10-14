@@ -77,7 +77,7 @@ pub struct PeerOpt {
 
     // TODO: External files here is not necessarily nicest for unit testing.
     // ALSO TODO: Can we make them optional?  Not yet.
-    // weigh in on https://github.com/djc/quinn/issues/35 when sober.
+    // See https://github.com/djc/quinn/issues/35
     /// TLS private key in PEM format
     #[structopt(parse(from_os_str), short = "k", long = "key")]
     key: PathBuf,

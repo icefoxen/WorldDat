@@ -148,6 +148,8 @@ impl PeerMap {
     /// on peer quality measures we don't track yet.
     ///
     /// For now though, we don't even bother splitting buckets or such.
+    ///
+    /// TODO ALSO: We DO want to omit duplicates though!
     pub fn insert(&mut self, new_peer: ContactInfo) {
         self.buckets[0].known_peers.push(new_peer);
         self.buckets[0].known_peers.sort();
