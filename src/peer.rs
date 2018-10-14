@@ -159,8 +159,7 @@ impl Peer {
                 .to_socket_addrs()?
                 .next()
                 .ok_or(format_err!("couldn't resolve bootstrap peer to an address"))?;
-            use futures::future;
-            let future: Box<dyn Future<Item = (), Error = ()>> = Box::new(
+            let future1: Box<dyn Future<Item = (), Error = ()>> = Box::new(
                 endpoint
                     .connect(&addr, "localhost")?
                     .map_err(|e| error!("failed to connect: {}", e))
@@ -172,13 +171,25 @@ impl Peer {
                     }),
             );
 
-            let f: Box<dyn Future<Item = (), Error = ()>> = Box::new(
-                driver
-                    .map_err(|e| eprintln!("IO error: {}", e))
-                    .select(future),
+            let future2: Box<dyn Future<Item = (), Error = ()>> =
+                Box::new(driver.map_err(|e| eprintln!("IO error: {}", e)));
+
+            use futures::*;
+
+            // This too half a fucking hour to figure out,
+            // after I'd already been told the answer.
+            // select() returns a future that yields a tuple
+            // for both the Item type AND THE Error TYPE.
+            // NOWHERE did it tell me that the type mismatch
+            // was in the Error type!
+            let v: Box<dyn Future<Item = (), Error = ()>> = Box::new(
+                future1
+                    .select(future2)
+                    .map(|((), _select_next)| ())
+                    .map_err(|_| ()),
             );
 
-            self.runtime.spawn(f);
+            self.runtime.spawn(v);
             // self.runtime.spawn(future);
         }
 
@@ -268,30 +279,29 @@ mod tests {
 
     // This isn't necessarily the best way to do this, but...
     lazy_static! {
-        // static ref SERVER_THREAD: thread::JoinHandle<Result<(), failure::Error>> = {
-        //     thread::spawn(move || {
-        //         let mut peer = peer::Peer::new(PeerOpt {
-        //             bootstrap_peer: None,
-        //             listen: "[::]:4433".to_socket_addrs().unwrap().next().unwrap(),
-        //             ca: None,
-        //             key: "certs/server.rsa".into(),
-        //             cert: "certs/server.chain".into(),
-        //         });
+        static ref SERVER_THREAD: thread::JoinHandle<Result<(), failure::Error>> = {
+            thread::spawn(move || {
+                let mut peer = peer::Peer::new(PeerOpt {
+                    bootstrap_peer: None,
+                    listen: "[::]:4433".to_socket_addrs().unwrap().next().unwrap(),
+                    ca: None,
+                    key: "certs/server.rsa".into(),
+                    cert: "certs/server.chain".into(),
+                });
 
-        //         peer.run().expect("Could not run peer?");
-        //         Ok(())
-        //     })
-        // };
+                peer.run().expect("Could not run peer?");
+                Ok(())
+            })
+        };
     }
     #[test]
     fn test_client_connection() {
-        ::setup_logging();
+        // ::setup_logging();
 
-        // lazy_static::initialize(&SERVER_THREAD);
-
-        thread::sleep(Duration::from_millis(1000));
+        lazy_static::initialize(&SERVER_THREAD);
 
         // TODO: Make sure it actually fails when no server is running!
+        // Currently it doesn't, it just times out... eventually.
         let mut peer = peer::Peer::new(PeerOpt {
             bootstrap_peer: Some(url::Url::parse("quic://[::1]:4433/").unwrap()),
             listen: "[::]:4434".to_socket_addrs().unwrap().next().unwrap(),
