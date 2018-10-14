@@ -29,6 +29,7 @@ use structopt::StructOpt;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
+mod hash;
 mod peer;
 
 fn setup_logging() {
