@@ -19,11 +19,30 @@ use rustls::internal::pemfile;
 
 use hash::*;
 
+/// The maximum number of peers that can be in a `FindPeerResponse`.
+/// Rather arbitrary, but it really should be some finite number for the
+/// sake of all involved.
+const MAX_PEERS_RESPONSE: usize = 8;
+
 /// The actual serializable messages that can be sent back and forth.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 enum Message {
-    Ping { id: PeerId },
-    Pong { id: PeerId },
+    Ping {
+        id: PeerId,
+    },
+    Pong {
+        id: PeerId,
+    },
+    FindPeer {
+        id: PeerId,
+    },
+    FindPeerResponsePeerFound {
+        contact: ContactInfo,
+    },
+    FindPeerResponsePeerNotFound {
+        id: PeerId,
+        neighbors: [Option<ContactInfo>; MAX_PEERS_RESPONSE],
+    },
 }
 
 use PeerOpt;
@@ -77,7 +96,7 @@ fn run_ping(id: PeerId, stream: quinn::Stream) -> impl Future<Item = (), Error =
 pub struct PeerId(Blake2Hash);
 
 /// Contact info for a peer, mapping the `PeerId` to an IP address and port.
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContactInfo {
     peer_id: PeerId,
     address: SocketAddr,

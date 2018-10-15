@@ -1,4 +1,7 @@
 //! A pile of basic infrastructure stuff for dealing with hashes.  Whew!
+//!
+//! Would be 90% unnecessary if we had const generics, or just wimped out
+//! and had them hold a Vec, but they should be cheap value types dammit!
 
 use std::cmp::Ordering;
 use std::fmt;
