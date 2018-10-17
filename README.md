@@ -57,6 +57,11 @@ Coral does something different; it distributes things differently.  Investigate 
 
 Possibly useful crates for bignums: `num`, `ramp`, `rug`,
 
+From the conversation here: https://www.reddit.com/r/rust/comments/9oa2n9/whats_everyone_working_on_this_week/e7tjq2a/
+
+ * Bittorrent's DHT has pathological behavior in some cases, find out more.
+ * Maidsafe and cjdns are worth investigating more.
+
 ## Sketch of DHT operation
 
 Based almost entirely on Bittorrent, since it works well and has good documentation.

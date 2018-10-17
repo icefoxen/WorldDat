@@ -52,6 +52,7 @@ fn duration_secs(x: &Duration) -> f32 {
     x.as_secs() as f32 + x.subsec_nanos() as f32 * 1e-9
 }
 
+/// This sends a ping and listens for a response.
 fn run_ping(id: PeerId, stream: quinn::Stream) -> impl Future<Item = (), Error = ()> {
     info!("Trying to send ping");
     let message = Message::Ping { id };
@@ -201,19 +202,19 @@ impl Peer {
     pub fn run(&mut self) -> Result<()> {
         // For now we always listen...
         info!("Bootstrap peer: {:?}", self.options.bootstrap_peer);
-        self.start_client()?;
+        self.start_outgoing()?;
 
         // Start each the client and server futures.
         info!("Starting server on {}", self.options.listen);
-        self.start_server()?;
+        self.start_listener()?;
 
         // Block on futures and run them to completion.
         self.runtime.run().map_err(Error::from)
     }
 
     /// Creates a future that does all the communication stuff needed
-    /// to talk to a new connection.
-    pub fn handle_new_client_connection(
+    /// to talk to a new incoming connection.
+    pub fn handle_new_outgoing_connection(
         id: PeerId,
         conn: quinn::NewClientConnection,
         start: Instant,
@@ -224,42 +225,48 @@ impl Peer {
 
         info!("connected at {}", duration_secs(&start.elapsed()));
         let conn = conn.connection;
-        let stream = conn.open_bi();
-        stream
+        let stream_future = conn.open_bi();
+        stream_future
             .map_err(|e| format_err!("failed to open stream: {}", e))
-            .and_then(move |stream| {
-                info!("stream opened at {}", duration_secs(&start.elapsed()));
-                tokio::io::write_all(stream, serialized_message)
-                    .map_err(|e| format_err!("failed to send request: {}", e))
-            }).and_then(|(stream, _)| {
-                tokio::io::shutdown(stream)
-                    .map_err(|e| format_err!("failed to shutdown stream: {}", e))
-            }).and_then(move |stream| {
-                let response_start = Instant::now();
-                info!(
-                    "request sent at {}",
-                    duration_secs(&(response_start - start))
-                );
-                quinn::read_to_end(stream, usize::max_value())
-                    .map_err(|e| format_err!("failed to read response: {}", e))
-                    .map(move |x| (x, response_start))
-            }).and_then(move |((_, data), response_start)| {
-                let seconds = duration_secs(&response_start.elapsed());
-                info!(
-                    "response received in {}ms - {} KiB/s",
-                    response_start.elapsed().subsec_millis(),
-                    data.len() as f32 / (seconds * 1024.0)
-                );
-                let msg: ::std::result::Result<Message, rmp_serde::decode::Error> =
-                    rmp_serde::from_slice(&data);
-                debug!("Got response: {:?}", msg);
-                conn.close(0, b"done").map_err(|_| unreachable!())
-            }).map(|()| info!("connection closed"))
+            .then(move |stream| {
+                let s = stream.unwrap();
+                run_ping(id, s).map_err(|e| format_err!("failed to open stream: {:?}", e))
+            })
+        // stream
+        //     .map_err(|e| format_err!("failed to open stream: {}", e))
+        //     .and_then(move |stream| {
+        //         info!("stream opened at {}", duration_secs(&start.elapsed()));
+        //         tokio::io::write_all(stream, serialized_message)
+        //             .map_err(|e| format_err!("failed to send request: {}", e))
+        //     }).and_then(|(stream, _)| {
+        //         tokio::io::shutdown(stream)
+        //             .map_err(|e| format_err!("failed to shutdown stream: {}", e))
+        //     }).and_then(move |stream| {
+        //         let response_start = Instant::now();
+        //         info!(
+        //             "request sent at {}",
+        //             duration_secs(&(response_start - start))
+        //         );
+        //         quinn::read_to_end(stream, usize::max_value())
+        //             .map_err(|e| format_err!("failed to read response: {}", e))
+        //             .map(move |x| (x, response_start))
+        //     }).and_then(move |((_, data), response_start)| {
+        //         let seconds = duration_secs(&response_start.elapsed());
+        //         info!(
+        //             "response received in {}ms - {} KiB/s",
+        //             response_start.elapsed().subsec_millis(),
+        //             data.len() as f32 / (seconds * 1024.0)
+        //         );
+        //         let msg: ::std::result::Result<Message, rmp_serde::decode::Error> =
+        //             rmp_serde::from_slice(&data);
+        //         debug!("Got response: {:?}", msg);
+        //         conn.close(0, b"done").map_err(|_| unreachable!())
+        //     }).map(|()| info!("connection closed"))
     }
 
     /// Starts the client, spawning it on this `Peer`'s
     /// runtime.  Use `peer.runtime.run()` to actually drive it.
-    pub fn start_client(&mut self) -> Result<()> {
+    pub fn start_outgoing(&mut self) -> Result<()> {
         let config = quinn::Config {
             ..quinn::Config::default()
         };
@@ -289,7 +296,7 @@ impl Peer {
                     .map_err(|e| error!("failed to connect: {}", e))
                     .and_then(move |conn: quinn::NewClientConnection| {
                         debug!("Connection established");
-                        Self::handle_new_client_connection(id, conn, start).map_err(|e| {
+                        Self::handle_new_outgoing_connection(id, conn, start).map_err(|e| {
                             error!("Error handling client connection: {}", e);
                         })
                     }),
@@ -317,7 +324,9 @@ impl Peer {
         Ok(())
     }
 
-    pub fn start_server(&mut self) -> Result<()> {
+    /// Start listening on a port for other peers to come
+    /// talk to us.
+    pub fn start_listener(&mut self) -> Result<()> {
         let mut builder = quinn::Endpoint::new();
         builder
             .config(quinn::Config {
@@ -391,7 +400,6 @@ mod tests {
 
     use std::net::ToSocketAddrs;
     use std::thread;
-    use std::time::Duration;
 
     use failure::{self, Error};
     use lazy_static;
@@ -433,7 +441,7 @@ mod tests {
             cert: "certs/server.chain".into(),
         });
 
-        let res = peer.start_client();
+        let res = peer.start_outgoing();
 
         // Block on futures and run them to completion.
         peer.runtime.run().map_err(Error::from).unwrap();
