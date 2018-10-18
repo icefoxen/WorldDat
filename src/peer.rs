@@ -20,11 +20,6 @@ use rustls::internal::pemfile;
 
 use hash::*;
 
-/// The maximum number of peers that can be in a `FindPeerResponse`.
-/// Rather arbitrary, but it really should be some finite number for the
-/// sake of all involved.
-const MAX_PEERS_RESPONSE: usize = 8;
-
 /// The actual serializable messages that can be sent back and forth.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 enum Message {
@@ -44,7 +39,7 @@ enum Message {
         id: PeerId,
         /// It's ok to have this be unbounded size 'cause we only receive a fixed-size
         /// buffer from any client...  I'm pretty sure.
-        // neighbors: Vec<Option<ContactInfo>>,
+        /// TODO: Verify!
         neighbors: Vec<ContactInfo>,
     },
 }
@@ -54,46 +49,6 @@ type Result<T> = result::Result<T, Error>;
 
 fn duration_secs(x: &Duration) -> f32 {
     x.as_secs() as f32 + x.subsec_nanos() as f32 * 1e-9
-}
-
-/// This sends a ping and listens for a response.
-fn run_ping(id: PeerId, stream: quinn::Stream) -> impl Future<Item = (), Error = ()> {
-    info!("Trying to send ping");
-    let message = Message::Ping { id };
-    let serialized_message = rmp_serde::to_vec(&message).expect("Could not serialize message?!");
-    tokio::io::write_all(stream, serialized_message)
-        .map_err(|e| warn!("Failed to send request: {}", e))
-        .and_then(move |(mut stream, _v)| {
-            stream.flush().expect("Could not flush stream?");
-            info!("Sent, reading?");
-            quinn::read_to_end(stream, 1024 * 64)
-                .map_err(|e| warn!("failed to read response: {}", e))
-        }).and_then(move |(stream, req)| {
-            let msg: ::std::result::Result<Message, rmp_serde::decode::Error> =
-                rmp_serde::from_slice(&req);
-            debug!("Got response: {:?}", msg);
-            let to_send = match msg {
-                Ok(Message::Ping { id }) => {
-                    info!("Trying to send pong");
-                    let message = Message::Pong { id };
-                    rmp_serde::to_vec(&message)
-                        .expect("Could not serialize message; should never happen!")
-                }
-                Ok(val) => {
-                    info!("Got message: {:?}, not doing anything with it", val);
-                    vec![]
-                }
-                Err(e) => {
-                    info!("Got unknown message: {:?}, error {:?}", &req, e);
-                    vec![]
-                }
-            };
-
-            tokio::io::write_all(stream, to_send)
-                .map_err(|e| warn!("Failed to send request: {}", e))
-        }).and_then(|(stream, _)| {
-            tokio::io::shutdown(stream).map_err(|e| warn!("Failed to shut down stream: {}", e))
-        }).map(move |_| info!("request complete"))
 }
 
 /// A hash identifying a Peer.
@@ -176,10 +131,19 @@ impl PeerMap {
     ///
     /// For now though, we don't even bother splitting buckets or such.
     ///
-    /// TODO ALSO: We DO want to omit duplicates though!
+    /// We DO prevent duplicates though; if a peer is given that has a peer_id
+    /// that already exists in the map, it will replace the old one.
     pub fn insert(&mut self, new_peer: ContactInfo) {
-        self.buckets[0].known_peers.push(new_peer);
-        self.buckets[0].known_peers.sort();
+        if let Some(i) = self.buckets[0]
+            .known_peers
+            .iter()
+            .position(|ci| ci.peer_id == new_peer.peer_id)
+        {
+            self.buckets[0].known_peers[i].peer_id = new_peer.peer_id;
+        } else {
+            self.buckets[0].known_peers.push(new_peer);
+            self.buckets[0].known_peers.sort();
+        }
     }
 }
 
@@ -313,38 +277,7 @@ impl Peer {
                 let s = stream.unwrap();
                 let msg = Message::Ping { id };
                 Self::send_message(s, msg)
-                // run_ping(id, s).map_err(|e| format_err!("failed to open stream: {:?}", e))
             })
-        // stream
-        //     .map_err(|e| format_err!("failed to open stream: {}", e))
-        //     .and_then(move |stream| {
-        //         info!("stream opened at {}", duration_secs(&start.elapsed()));
-        //         tokio::io::write_all(stream, serialized_message)
-        //             .map_err(|e| format_err!("failed to send request: {}", e))
-        //     }).and_then(|(stream, _)| {
-        //         tokio::io::shutdown(stream)
-        //             .map_err(|e| format_err!("failed to shutdown stream: {}", e))
-        //     }).and_then(move |stream| {
-        //         let response_start = Instant::now();
-        //         info!(
-        //             "request sent at {}",
-        //             duration_secs(&(response_start - start))
-        //         );
-        //         quinn::read_to_end(stream, usize::max_value())
-        //             .map_err(|e| format_err!("failed to read response: {}", e))
-        //             .map(move |x| (x, response_start))
-        //     }).and_then(move |((_, data), response_start)| {
-        //         let seconds = duration_secs(&response_start.elapsed());
-        //         info!(
-        //             "response received in {}ms - {} KiB/s",
-        //             response_start.elapsed().subsec_millis(),
-        //             data.len() as f32 / (seconds * 1024.0)
-        //         );
-        //         let msg: ::std::result::Result<Message, rmp_serde::decode::Error> =
-        //             rmp_serde::from_slice(&data);
-        //         debug!("Got response: {:?}", msg);
-        //         conn.close(0, b"done").map_err(|_| unreachable!())
-        //     }).map(|()| info!("connection closed"))
     }
 
     /// Starts the client, spawning it on this `Peer`'s
@@ -437,8 +370,6 @@ impl Peer {
             "Bound to {}, listening for incoming connections.",
             self.options.listen
         );
-        // Copy self.id to move into closure
-        let id = self.id;
 
         self.runtime.spawn(incoming.for_each(move |conn| {
             let quinn::NewConnection {
