@@ -8,7 +8,7 @@ use std::str;
 use std::time::{Duration, Instant};
 
 use failure::{self, err_msg, Error, ResultExt};
-use futures::{Future, Stream};
+use futures::{future, Future, Stream};
 use quinn;
 use rmp_serde;
 use tokio;
@@ -210,6 +210,63 @@ impl Peer {
 
         // Block on futures and run them to completion.
         self.runtime.run().map_err(Error::from)
+    }
+
+    /// Sends the given message on the given stream, handling errors and such.
+    /// Or rather, returns a new future which does that.
+    ///
+    /// The stream is closed after the message is sent, since streams are lightweight.
+    /// All messages should be stateless, I believe, so that we never have to remember
+    /// what the heck is going on.  (Unfortunately I think this that might have problems
+    /// for security and such, but, we'll give it a try.)
+    fn send_message(
+        &self,
+        stream: quinn::Stream,
+        message: Message,
+    ) -> impl Future<Item = (), Error = ()> {
+        let serialized_message =
+            rmp_serde::to_vec(&message).expect("Could not serialize message?!");
+        tokio::io::write_all(stream, serialized_message)
+            .map_err(|e| warn!("Failed to send request: {}", e))
+            .map(move |_| info!("Message send complete: {:?}", message))
+    }
+
+    /// Reads a message from the given stream and updates the `Peer`'s internal
+    /// state accordingly, and returns a future of what to do next (if anything).
+    fn receive_message(&mut self, stream: quinn::Stream) -> impl Future<Item = (), Error = ()> {
+        quinn::read_to_end(stream, 1024 * 64)
+            .map_err(|e| warn!("failed to read response: {}", e))
+            .and_then(move |(stream, req)| {
+                let msg: ::std::result::Result<Message, rmp_serde::decode::Error> =
+                    rmp_serde::from_slice(&req);
+                debug!("Got message: {:?}", msg);
+                let to_do_next: Box<dyn Future<Item = quinn::Stream, Error = ()>> = match msg {
+                    Ok(Message::Ping { id }) => {
+                        info!("Trying to send pong");
+                        let message = Message::Pong { id };
+                        let to_send = rmp_serde::to_vec(&message)
+                            .expect("Could not serialize message; should never happen!");
+                        Box::new(
+                            tokio::io::write_all(stream, to_send)
+                                .map_err(|e| warn!("Failed to send request: {}", e))
+                                .map(|(stream, _vec)| stream),
+                        )
+                    }
+                    Ok(val) => {
+                        info!("Got message: {:?}, not doing anything with it", val);
+                        Box::new(future::ok(stream))
+                    }
+                    Err(e) => {
+                        info!("Got unknown message: {:?}, error {:?}", &req, e);
+                        Box::new(future::ok(stream))
+                    }
+                };
+                to_do_next
+                    .and_then(|stream| {
+                        tokio::io::shutdown(stream)
+                            .map_err(|e| warn!("Failed to shut down stream: {}", e))
+                    }).map(move |_| info!("request complete"))
+            })
     }
 
     /// Creates a future that does all the communication stuff needed
@@ -414,7 +471,7 @@ mod tests {
             thread::spawn(move || {
                 let mut peer = peer::Peer::new(PeerOpt {
                     bootstrap_peer: None,
-                    listen: "[::]:4433".to_socket_addrs().unwrap().next().unwrap(),
+                    listen: "[::]:5544".to_socket_addrs().unwrap().next().unwrap(),
                     ca: None,
                     key: "certs/server.rsa".into(),
                     cert: "certs/server.chain".into(),
@@ -434,8 +491,8 @@ mod tests {
         // TODO: Make sure it actually fails when no server is running!
         // Currently it doesn't, it just times out... eventually.
         let mut peer = peer::Peer::new(PeerOpt {
-            bootstrap_peer: Some(url::Url::parse("quic://[::1]:4433/").unwrap()),
-            listen: "[::]:4434".to_socket_addrs().unwrap().next().unwrap(),
+            bootstrap_peer: Some(url::Url::parse("quic://[::1]:5544/").unwrap()),
+            listen: "[::]:5545".to_socket_addrs().unwrap().next().unwrap(),
             ca: Some("certs/ca.der".into()),
             key: "certs/server.rsa".into(),
             cert: "certs/server.chain".into(),
