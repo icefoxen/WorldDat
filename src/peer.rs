@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
 use std::result;
 use std::str;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use failure::{self, err_msg, Error, ResultExt};
@@ -25,7 +26,7 @@ use hash::*;
 const MAX_PEERS_RESPONSE: usize = 8;
 
 /// The actual serializable messages that can be sent back and forth.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 enum Message {
     Ping {
         id: PeerId,
@@ -41,7 +42,10 @@ enum Message {
     },
     FindPeerResponsePeerNotFound {
         id: PeerId,
-        neighbors: [Option<ContactInfo>; MAX_PEERS_RESPONSE],
+        /// It's ok to have this be unbounded size 'cause we only receive a fixed-size
+        /// buffer from any client...  I'm pretty sure.
+        // neighbors: Vec<Option<ContactInfo>>,
+        neighbors: Vec<ContactInfo>,
     },
 }
 
@@ -122,7 +126,7 @@ impl Ord for ContactInfo {
 struct Bucket {
     /// The peers in the bucket.
     known_peers: Vec<ContactInfo>,
-    /// The min nad max address range of the bucket; it stores peers with ID's
+    /// The min and max address range of the bucket; it stores peers with ID's
     /// in the range of `[2^min,2^max)`.
     ///
     /// TODO: u32 is way overkill here, but, KISS for now.
@@ -143,6 +147,9 @@ impl Bucket {
 /// As per Kademila and Bittorrent DHT, the further away from the peer's
 /// hash (as measured by the XOR distance metric), the lower resolution
 /// it is.
+///
+/// TODO: Can the `im` crate serve any purpose here?  I'm really not sure
+/// if it can, but it's so *neat*...
 pub struct PeerMap {
     buckets: Vec<Bucket>,
     /// The maximum number of peers per bucket.
@@ -176,17 +183,26 @@ impl PeerMap {
     }
 }
 
+/// All parts of the peer state that get stuffed into an Arc
+/// and potentially shared between threads.
+pub struct PeerSharedState {
+    peermap: PeerMap,
+}
+
 /// All peer state stuff.
 pub struct Peer {
     id: PeerId,
     options: PeerOpt,
     runtime: Runtime,
-    peermap: PeerMap,
+    shared: Arc<RwLock<PeerSharedState>>,
 }
 
 impl Peer {
     pub fn new(options: PeerOpt) -> Self {
-        let peermap = PeerMap::new();
+        let shared_state = PeerSharedState {
+            peermap: PeerMap::new(),
+        };
+        let shared = Arc::new(RwLock::new(shared_state));
         let runtime = Runtime::new().expect("Could not create runtime");
         let id_seed: [u8; 64] = [0; 64];
         let id = PeerId(Blake2Hash::new(&id_seed));
@@ -194,7 +210,7 @@ impl Peer {
             id,
             options,
             runtime,
-            peermap,
+            shared,
         }
     }
 
@@ -219,21 +235,28 @@ impl Peer {
     /// All messages should be stateless, I believe, so that we never have to remember
     /// what the heck is going on.  (Unfortunately I think this that might have problems
     /// for security and such, but, we'll give it a try.)
-    fn send_message(
-        &self,
-        stream: quinn::Stream,
-        message: Message,
-    ) -> impl Future<Item = (), Error = ()> {
+    ///
+    /// This can't take `&self` since it would have to be moved into the future.
+    /// If necessary it can take `Arc<RwLock<PeerSharedState>>`.
+    fn send_message(stream: quinn::Stream, message: Message) -> impl Future<Item = (), Error = ()> {
         let serialized_message =
             rmp_serde::to_vec(&message).expect("Could not serialize message?!");
+        let de: Message =
+            rmp_serde::from_slice(&serialized_message).expect("Could not deserialize message?!");
+        assert_eq!(message, de);
+        debug!("Serialized message: {:X?}", serialized_message);
         tokio::io::write_all(stream, serialized_message)
+            .and_then(|(stream, _vec)| tokio::io::shutdown(stream))
             .map_err(|e| warn!("Failed to send request: {}", e))
-            .map(move |_| info!("Message send complete: {:?}", message))
+            .map(move |_| info!("Message send complete: {:X?}", message))
     }
 
     /// Reads a message from the given stream and updates the `Peer`'s internal
     /// state accordingly, and returns a future of what to do next (if anything).
-    fn receive_message(&mut self, stream: quinn::Stream) -> impl Future<Item = (), Error = ()> {
+    ///
+    /// This can't take `&self` since it would have to be moved into the future.
+    /// If necessary it can take `Arc<RwLock<PeerSharedState>>`.
+    fn receive_message(stream: quinn::Stream) -> impl Future<Item = (), Error = ()> {
         quinn::read_to_end(stream, 1024 * 64)
             .map_err(|e| warn!("failed to read response: {}", e))
             .and_then(move |(stream, req)| {
@@ -242,7 +265,7 @@ impl Peer {
                 debug!("Got message: {:?}", msg);
                 let to_do_next: Box<dyn Future<Item = quinn::Stream, Error = ()>> = match msg {
                     Ok(Message::Ping { id }) => {
-                        info!("Trying to send pong");
+                        info!("Got ping, trying to send pong");
                         let message = Message::Pong { id };
                         let to_send = rmp_serde::to_vec(&message)
                             .expect("Could not serialize message; should never happen!");
@@ -253,11 +276,11 @@ impl Peer {
                         )
                     }
                     Ok(val) => {
-                        info!("Got message: {:?}, not doing anything with it", val);
+                        info!("Got message: {:X?}, not doing anything with it", val);
                         Box::new(future::ok(stream))
                     }
                     Err(e) => {
-                        info!("Got unknown message: {:?}, error {:?}", &req, e);
+                        info!("Got unknown message: {:X?}, error {:?}", &req, e);
                         Box::new(future::ok(stream))
                     }
                 };
@@ -275,7 +298,8 @@ impl Peer {
         id: PeerId,
         conn: quinn::NewClientConnection,
         start: Instant,
-    ) -> impl Future<Item = (), Error = failure::Error> {
+        // ) -> impl Future<Item = (), Error = failure::Error> {
+    ) -> impl Future<Item = (), Error = ()> {
         let message = Message::Ping { id };
         let serialized_message =
             rmp_serde::to_vec(&message).expect("Could not serialize message?!");
@@ -287,7 +311,9 @@ impl Peer {
             .map_err(|e| format_err!("failed to open stream: {}", e))
             .then(move |stream| {
                 let s = stream.unwrap();
-                run_ping(id, s).map_err(|e| format_err!("failed to open stream: {:?}", e))
+                let msg = Message::Ping { id };
+                Self::send_message(s, msg)
+                // run_ping(id, s).map_err(|e| format_err!("failed to open stream: {:?}", e))
             })
         // stream
         //     .map_err(|e| format_err!("failed to open stream: {}", e))
@@ -353,9 +379,7 @@ impl Peer {
                     .map_err(|e| error!("failed to connect: {}", e))
                     .and_then(move |conn: quinn::NewClientConnection| {
                         debug!("Connection established");
-                        Self::handle_new_outgoing_connection(id, conn, start).map_err(|e| {
-                            error!("Error handling client connection: {}", e);
-                        })
+                        Self::handle_new_outgoing_connection(id, conn, start)
                     }),
             );
 
@@ -438,7 +462,9 @@ impl Peer {
                             return Ok(());
                         }
                     };
-                    current_thread::spawn(run_ping(id, stream));
+                    // let ping = Message::Ping{id};
+                    current_thread::spawn(Self::receive_message(stream));
+                    // current_thread::spawn(run_ping(id, stream));
                     Ok(())
                 });
 

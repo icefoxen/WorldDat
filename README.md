@@ -16,8 +16,10 @@ To build (on Debian):
 
 To run:
 
- * Start a node with no bootstrap node: `cargo run -- --cert certs/server.chain --key certs/server.rsa`
- * Start a node listening on a different port and tell it to use the existing one as a bootstrap node: `cargo run -- -l '[::]:5555' -b quic://127.0.0.1:4433 --cert certs/server.chain --key certs/server.rsa --ca certs/ca.der`
+ * Start a node with no bootstrap node: 
+   `cargo run -- --cert certs/server.chain --key certs/server.rsa`
+ * Start a node listening on a different port and tell it to use the existing one as a bootstrap node: 
+   `cargo run -- -l '[::]:5555' -b quic://127.0.0.1:4433 --cert certs/server.chain --key certs/server.rsa --ca certs/ca.der`
 
 To test:
 
