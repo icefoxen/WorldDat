@@ -150,12 +150,12 @@ impl PeerMap {
 /// All parts of the peer state that get stuffed into an Arc
 /// and potentially shared between threads.
 pub struct PeerSharedState {
+    id: PeerId,
     peermap: PeerMap,
 }
 
 /// All peer state stuff.
 pub struct Peer {
-    id: PeerId,
     options: PeerOpt,
     runtime: Runtime,
     shared: Arc<RwLock<PeerSharedState>>,
@@ -163,15 +163,15 @@ pub struct Peer {
 
 impl Peer {
     pub fn new(options: PeerOpt) -> Self {
+        let id_seed: [u8; 64] = [0; 64];
+        let id = PeerId(Blake2Hash::new(&id_seed));
         let shared_state = PeerSharedState {
+            id,
             peermap: PeerMap::new(),
         };
         let shared = Arc::new(RwLock::new(shared_state));
         let runtime = Runtime::new().expect("Could not create runtime");
-        let id_seed: [u8; 64] = [0; 64];
-        let id = PeerId(Blake2Hash::new(&id_seed));
         Peer {
-            id,
             options,
             runtime,
             shared,
@@ -208,11 +208,10 @@ impl Peer {
         let de: Message =
             rmp_serde::from_slice(&serialized_message).expect("Could not deserialize message?!");
         assert_eq!(message, de);
-        debug!("Serialized message: {:X?}", serialized_message);
         tokio::io::write_all(stream, serialized_message)
             .and_then(|(stream, _vec)| tokio::io::shutdown(stream))
             .map_err(|e| warn!("Failed to send request: {}", e))
-            .map(move |_| info!("Message send complete: {:X?}", message))
+            .map(move |_| debug!("Message send complete: {:X?}", message))
     }
 
     /// Reads a message from the given stream and updates the `Peer`'s internal
@@ -256,31 +255,68 @@ impl Peer {
             })
     }
 
-    /// Creates a future that does all the communication stuff needed
-    /// to talk to a new incoming connection.
-    pub fn handle_new_outgoing_connection(
-        id: PeerId,
-        conn: quinn::NewClientConnection,
-        start: Instant,
-        // ) -> impl Future<Item = (), Error = failure::Error> {
+    /// Returns a future which does all the talking necessary to communicate
+    /// with another peer, regardless of who started it.
+    ///
+    /// This should basically implement the state machine of the core protocol.
+    fn talk_to_peer(
+        connection: quinn::Connection,
+        incoming: quinn::IncomingStreams,
+        state: Arc<RwLock<PeerSharedState>>,
     ) -> impl Future<Item = (), Error = ()> {
-        let message = Message::Ping { id };
-        let serialized_message =
-            rmp_serde::to_vec(&message).expect("Could not serialize message?!");
+        let outgoing_stream: Box<dyn Future<Item = (), Error = ()>> = Box::new(
+            connection
+                .open_bi()
+                .map_err(|e| format_err!("failed to open stream: {}", e))
+                .then(move |stream| {
+                    info!("Sending message to peer");
+                    let s = stream.unwrap();
+                    let msg = Message::Ping {
+                        id: state.read().unwrap().id,
+                    };
+                    Self::send_message(s, msg)
+                }),
+        );
+        let incoming_streams: Box<dyn Future<Item = (), Error = ()>> = Box::new(
+            incoming
+                .map_err(|e| warn!("Incoming stream failed: {:?}", e))
+                .for_each(move |stream| {
+                    info!("Peer created incoming stream");
+                    // Don't bother with uni-directional streams yet.
+                    match stream {
+                        quinn::NewStream::Bi(bi_stream) => Self::receive_message(bi_stream)
+                            .map_err(|e| warn!("Incoming stream failed: {:?}", e)),
+                        quinn::NewStream::Uni(_) => unimplemented!(),
+                    }
+                }),
+        );
 
-        info!("connected at {}", duration_secs(&start.elapsed()));
-        let conn = conn.connection;
-        let stream_future = conn.open_bi();
-        stream_future
-            .map_err(|e| format_err!("failed to open stream: {}", e))
-            .then(move |stream| {
-                let s = stream.unwrap();
-                let msg = Message::Ping { id };
-                Self::send_message(s, msg)
-            })
+        let merged_stream_handlers = outgoing_stream.join(incoming_streams).map(|((), ())| ());
+
+        merged_stream_handlers
+        // incoming_streams
     }
 
-    /// Starts the client, spawning it on this `Peer`'s
+    // /// Creates a future that does all the communication stuff needed
+    // /// to talk to a new connection we've initiated to another peer.
+    // pub fn handle_new_outgoing_connection(
+    //     id: PeerId,
+    //     conn: quinn::NewClientConnection,
+    //     start: Instant,
+    // ) -> impl Future<Item = (), Error = ()> {
+    //     info!("connected at {}", duration_secs(&start.elapsed()));
+    //     let conn = conn.connection;
+    //     let stream_future = conn.open_bi();
+    //     stream_future
+    //         .map_err(|e| format_err!("failed to open stream: {}", e))
+    //         .then(move |stream| {
+    //             let s = stream.unwrap();
+    //             let msg = Message::Ping { id };
+    //             Self::send_message(s, msg)
+    //         })
+    // }
+
+    /// Starts the client, spawning a future that runs it on this `Peer`'s
     /// runtime.  Use `peer.runtime.run()` to actually drive it.
     pub fn start_outgoing(&mut self) -> Result<()> {
         let config = quinn::Config {
@@ -294,8 +330,6 @@ impl Peer {
                 builder.set_certificate_authority(&fs::read(&ca_path)?)?;
             }
             let (endpoint, driver, mut _incoming) = builder.bind("[::]:0")?;
-            // self.runtime
-            //     .spawn(driver.map_err(|e| eprintln!("IO error: {}", e)));
 
             let start = Instant::now();
 
@@ -304,15 +338,32 @@ impl Peer {
                 .to_socket_addrs()?
                 .next()
                 .ok_or(format_err!("couldn't resolve bootstrap peer to an address"))?;
-            // Copy self.id to move into closure
-            let id = self.id;
+            // Copy self.shared to move into closure
+            let shared = self.shared.clone();
             let future1: Box<dyn Future<Item = (), Error = ()>> = Box::new(
                 endpoint
                     .connect(&addr, "localhost")?
                     .map_err(|e| error!("failed to connect: {}", e))
                     .and_then(move |conn: quinn::NewClientConnection| {
-                        debug!("Connection established");
-                        Self::handle_new_outgoing_connection(id, conn, start)
+                        info!(
+                            "Connection established at {}",
+                            duration_secs(&start.elapsed())
+                        );
+                        let quinn::NewClientConnection {
+                            connection,
+                            incoming,
+                            session_tickets,
+                        } = conn;
+                        let _session_tickets = session_tickets;
+                        Self::talk_to_peer(connection, incoming, shared)
+                        // let stream_future = conn.open_bi();
+                        // stream_future
+                        //     .map_err(|e| format_err!("failed to open stream: {}", e))
+                        //     .then(move |stream| {
+                        //         let s = stream.unwrap();
+                        //         let msg = Message::Ping { id };
+                        //         Self::send_message(s, msg)
+                        //     })
                     }),
             );
 
@@ -371,11 +422,13 @@ impl Peer {
             self.options.listen
         );
 
+        let shared = self.shared.clone();
         self.runtime.spawn(incoming.for_each(move |conn| {
             let quinn::NewConnection {
                 incoming,
                 connection,
             } = conn;
+            let shared = shared.clone();
             info!(
                 "got connection: {}, {}, {:?}",
                 connection.remote_id(),
@@ -393,9 +446,12 @@ impl Peer {
                             return Ok(());
                         }
                     };
-                    // let ping = Message::Ping{id};
+
+                    let msg = Message::Ping {
+                        id: shared.read().unwrap().id,
+                    };
+                    // current_thread::spawn(Self::send_message(stream, msg));
                     current_thread::spawn(Self::receive_message(stream));
-                    // current_thread::spawn(run_ping(id, stream));
                     Ok(())
                 });
 
@@ -404,6 +460,9 @@ impl Peer {
         }));
 
         // TODO: Is this block_on() what we actually want?
+        // It is now, yes.  That will run ALL futures, and return
+        // when the `driver` future finishes -- ie, when the listening
+        // socket closes.
         self.runtime.block_on(driver)?;
         Ok(())
     }

@@ -84,6 +84,7 @@ These are analogous to Kademila (ping, store, find node, find value).  So our op
  * Find peers that have value
  * Announce value
 
+Might the `crossbeam` crate have some useful bits and pieces in it for async programming?
 
 ## References
 
