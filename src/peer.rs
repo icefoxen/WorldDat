@@ -238,19 +238,23 @@ impl Peer {
                                 .map(|(stream, _vec)| stream),
                         )
                     }
-                    Ok(val) => {
-                        info!("Got message: {:X?}, not doing anything with it", val);
+                    Ok(_val) => {
+                        info!("Unknown message, not doing anything with it");
                         Box::new(future::ok(stream))
                     }
                     Err(e) => {
-                        info!("Got unknown message: {:X?}, error {:?}", &req, e);
+                        info!("Error getting message, error {:?}", e);
                         Box::new(future::ok(stream))
                     }
                 };
                 to_do_next
                     .and_then(|stream| {
+                        trace!("Trying to shut down stream");
                         tokio::io::shutdown(stream)
-                            .map_err(|e| warn!("Failed to shut down stream: {}", e))
+                            .and_then(|v| {
+                                trace!("Done!");
+                                future::ok(v)
+                            }).map_err(|e| warn!("Failed to shut down stream: {}", e))
                     }).map(move |_| info!("request complete"))
             })
     }
@@ -277,6 +281,9 @@ impl Peer {
                     Self::send_message(s, msg)
                 }),
         );
+
+        // For each incoming stream, try to receive a message on it.
+        // TODO: Should this spawn a new task for each stream?  mmmmmmmmaybe.
         let incoming_streams: Box<dyn Future<Item = (), Error = ()>> = Box::new(
             incoming
                 .map_err(|e| warn!("Incoming stream failed: {:?}", e))
@@ -295,26 +302,8 @@ impl Peer {
 
         merged_stream_handlers
         // incoming_streams
+        // outgoing_stream
     }
-
-    // /// Creates a future that does all the communication stuff needed
-    // /// to talk to a new connection we've initiated to another peer.
-    // pub fn handle_new_outgoing_connection(
-    //     id: PeerId,
-    //     conn: quinn::NewClientConnection,
-    //     start: Instant,
-    // ) -> impl Future<Item = (), Error = ()> {
-    //     info!("connected at {}", duration_secs(&start.elapsed()));
-    //     let conn = conn.connection;
-    //     let stream_future = conn.open_bi();
-    //     stream_future
-    //         .map_err(|e| format_err!("failed to open stream: {}", e))
-    //         .then(move |stream| {
-    //             let s = stream.unwrap();
-    //             let msg = Message::Ping { id };
-    //             Self::send_message(s, msg)
-    //         })
-    // }
 
     /// Starts the client, spawning a future that runs it on this `Peer`'s
     /// runtime.  Use `peer.runtime.run()` to actually drive it.
@@ -352,18 +341,9 @@ impl Peer {
                         let quinn::NewClientConnection {
                             connection,
                             incoming,
-                            session_tickets,
+                            session_tickets: _session_tickets,
                         } = conn;
-                        let _session_tickets = session_tickets;
                         Self::talk_to_peer(connection, incoming, shared)
-                        // let stream_future = conn.open_bi();
-                        // stream_future
-                        //     .map_err(|e| format_err!("failed to open stream: {}", e))
-                        //     .then(move |stream| {
-                        //         let s = stream.unwrap();
-                        //         let msg = Message::Ping { id };
-                        //         Self::send_message(s, msg)
-                        //     })
                     }),
             );
 
@@ -435,27 +415,25 @@ impl Peer {
                 connection.remote_address(),
                 connection.protocol()
             );
-            let connection_handle_future = incoming
-                .map_err(move |e| info!("connection terminated: {}", e))
-                .for_each(move |stream| {
-                    info!("Processing stream");
-                    let stream = match stream {
-                        quinn::NewStream::Bi(stream) => stream,
-                        quinn::NewStream::Uni(_) => {
-                            error!("client opened unidirectional stream");
-                            return Ok(());
-                        }
-                    };
+            // let connection_handle_future = incoming
+            //     .map_err(move |e| info!("connection terminated: {}", e))
+            //     .for_each(move |stream| {
+            //         info!("Processing stream");
+            //         let stream = match stream {
+            //             quinn::NewStream::Bi(stream) => stream,
+            //             quinn::NewStream::Uni(_) => {
+            //                 error!("client opened unidirectional stream");
+            //                 return Ok(());
+            //             }
+            //         };
+            //         // current_thread::spawn(Self::send_message(stream, msg));
+            //         current_thread::spawn(Self::receive_message(stream));
+            //         Ok(())
+            //     });
 
-                    let msg = Message::Ping {
-                        id: shared.read().unwrap().id,
-                    };
-                    // current_thread::spawn(Self::send_message(stream, msg));
-                    current_thread::spawn(Self::receive_message(stream));
-                    Ok(())
-                });
+            // current_thread::spawn(connection_handle_future);
 
-            current_thread::spawn(connection_handle_future);
+            current_thread::spawn(Self::talk_to_peer(connection, incoming, shared));
             Ok(())
         }));
 
