@@ -91,5 +91,5 @@ Might the `crossbeam` crate have some useful bits and pieces in it for async pro
  * [Bittorrent DHT](http://www.bittorrent.org/beps/bep_0005.html) (this one is by far the most complete and useful)
  * [IPFS Whitepaper](https://github.com/ipfs/ipfs/blob/master/papers/ipfs-cap2pfs/ipfs-p2p-file-system.pdf)
  * [Kademila paper](http://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf)
- * [S/Kademila](http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.68.4986)
+ * [S/Kademila](http://www.spovnet.de/files/publications/SKademlia2007.pdf)
  * Coral DSHT?
