@@ -274,9 +274,12 @@ impl Peer {
                 .map_err(|e| format_err!("failed to open stream: {}", e))
                 .then(move |stream| {
                     info!("Sending message to peer");
-                    let s = stream.unwrap();
+                    let s = stream.expect("Could not unwrap stream?");
                     let msg = Message::Ping {
-                        id: state.read().unwrap().id,
+                        id: state
+                            .read()
+                            .expect("RwLock poisoned; should never happen!")
+                            .id,
                     };
                     Self::send_message(s, msg)
                 }),
@@ -308,16 +311,15 @@ impl Peer {
     /// Starts the client, spawning a future that runs it on this `Peer`'s
     /// runtime.  Use `peer.runtime.run()` to actually drive it.
     pub fn start_outgoing(&mut self) -> Result<()> {
-        let config = quinn::Config {
-            ..quinn::Config::default()
-        };
         if let Some(ref bootstrap_peer) = self.options.bootstrap_peer {
-            let mut builder = quinn::Endpoint::new();
-            builder.config(config);
+            let mut builder = quinn::EndpointBuilder::from_config(quinn::Config {
+                max_remote_bi_streams: 64,
+                ..quinn::Config::default()
+            });
 
-            if let Some(ref ca_path) = self.options.ca {
-                builder.set_certificate_authority(&fs::read(&ca_path)?)?;
-            }
+            // if let Some(ref ca_path) = self.options.ca {
+            //     builder.set_certificate_authority(&fs::read(&ca_path)?)?;
+            // }
             let (endpoint, driver, mut _incoming) = builder.bind("[::]:0")?;
 
             let start = Instant::now();
@@ -363,6 +365,7 @@ impl Peer {
                     .map_err(|_| ()),
             );
 
+            info!("Trying to start outgoing to address {}", addr);
             self.runtime.spawn(v);
         }
 
@@ -372,12 +375,11 @@ impl Peer {
     /// Start listening on a port for other peers to come
     /// talk to us.
     pub fn start_listener(&mut self) -> Result<()> {
-        let mut builder = quinn::Endpoint::new();
-        builder
-            .config(quinn::Config {
-                max_remote_bi_streams: 64,
-                ..quinn::Config::default()
-            }).listen();
+        // TODO: prefer `listen_with_keys`.
+        let mut builder = quinn::EndpointBuilder::from_config(quinn::Config {
+            max_remote_bi_streams: 64,
+            ..quinn::Config::default()
+        });
 
         // Mongle TLS keys
         let keys = {
@@ -415,23 +417,6 @@ impl Peer {
                 connection.remote_address(),
                 connection.protocol()
             );
-            // let connection_handle_future = incoming
-            //     .map_err(move |e| info!("connection terminated: {}", e))
-            //     .for_each(move |stream| {
-            //         info!("Processing stream");
-            //         let stream = match stream {
-            //             quinn::NewStream::Bi(stream) => stream,
-            //             quinn::NewStream::Uni(_) => {
-            //                 error!("client opened unidirectional stream");
-            //                 return Ok(());
-            //             }
-            //         };
-            //         // current_thread::spawn(Self::send_message(stream, msg));
-            //         current_thread::spawn(Self::receive_message(stream));
-            //         Ok(())
-            //     });
-
-            // current_thread::spawn(connection_handle_future);
 
             current_thread::spawn(Self::talk_to_peer(connection, incoming, shared));
             Ok(())
