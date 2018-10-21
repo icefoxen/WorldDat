@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
+use std::fmt;
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
 use std::result;
@@ -9,12 +10,13 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use failure::{self, err_msg, Error, ResultExt};
-use futures::{future, Future, Stream};
+use futures::{self, future, Future};
 use quinn;
 use rmp_serde;
 use tokio;
 use tokio::runtime::current_thread;
 use tokio::runtime::current_thread::Runtime;
+use tokio_io;
 
 use rustls::internal::pemfile;
 
@@ -42,6 +44,33 @@ enum Message {
         /// TODO: Verify!
         neighbors: Vec<ContactInfo>,
     },
+}
+
+trait SendStream: quinn::Write + io::Write + tokio_io::AsyncWrite {}
+trait Stream:
+    quinn::Write + io::Write + tokio_io::AsyncWrite + quinn::Read + io::Read + tokio_io::AsyncRead
+{
+}
+trait ConnectionThingy {
+    type SendStream: SendStream + 'static;
+    type Stream: Stream + 'static;
+    type Error: fmt::Debug + 'static;
+    fn open_uni(&self) -> Box<dyn Future<Item = Self::SendStream, Error = Self::Error>>;
+    fn open_bi(&self) -> Box<dyn Future<Item = Self::Stream, Error = Self::Error>>;
+}
+impl SendStream for quinn::SendStream {}
+impl Stream for quinn::Stream {}
+
+impl ConnectionThingy for quinn::Connection {
+    type SendStream = quinn::SendStream;
+    type Stream = quinn::Stream;
+    type Error = quinn::ConnectionError;
+    fn open_uni(&self) -> Box<dyn Future<Item = Self::SendStream, Error = Self::Error>> {
+        Box::new(self.open_uni())
+    }
+    fn open_bi(&self) -> Box<dyn Future<Item = quinn::Stream, Error = Self::Error>> {
+        Box::new(self.open_bi())
+    }
 }
 
 use PeerOpt;
@@ -202,7 +231,10 @@ impl Peer {
     ///
     /// This can't take `&self` since it would have to be moved into the future.
     /// If necessary it can take `Arc<RwLock<PeerSharedState>>`.
-    fn send_message(stream: quinn::Stream, message: Message) -> impl Future<Item = (), Error = ()> {
+    fn send_message<S>(stream: S, message: Message) -> impl Future<Item = (), Error = ()>
+    where
+        S: Stream + 'static,
+    {
         let serialized_message =
             rmp_serde::to_vec(&message).expect("Could not serialize message?!");
         let de: Message =
@@ -219,14 +251,18 @@ impl Peer {
     ///
     /// This can't take `&self` since it would have to be moved into the future.
     /// If necessary it can take `Arc<RwLock<PeerSharedState>>`.
-    fn receive_message(stream: quinn::Stream) -> impl Future<Item = (), Error = ()> {
+    /// fn receive_message(stream: quinn::Stream) -> impl Future<Item = (), Error = ()> {
+    fn receive_message<S>(stream: S) -> impl Future<Item = (), Error = ()>
+    where
+        S: Stream + 'static,
+    {
         quinn::read_to_end(stream, 1024 * 64)
             .map_err(|e| warn!("failed to read response: {}", e))
             .and_then(move |(stream, req)| {
                 let msg: ::std::result::Result<Message, rmp_serde::decode::Error> =
                     rmp_serde::from_slice(&req);
                 debug!("Got message: {:?}", msg);
-                let to_do_next: Box<dyn Future<Item = quinn::Stream, Error = ()>> = match msg {
+                let to_do_next: Box<dyn Future<Item = S, Error = ()>> = match msg {
                     Ok(Message::Ping { id }) => {
                         info!("Got ping, trying to send pong");
                         let message = Message::Pong { id };
@@ -263,15 +299,21 @@ impl Peer {
     /// with another peer, regardless of who started it.
     ///
     /// This should basically implement the state machine of the core protocol.
-    fn talk_to_peer(
-        connection: quinn::Connection,
-        incoming: quinn::IncomingStreams,
+    fn talk_to_peer<Conn, FS>(
+        connection: Conn,
+        incoming: FS,
         state: Arc<RwLock<PeerSharedState>>,
-    ) -> impl Future<Item = (), Error = ()> {
+    ) -> impl Future<Item = (), Error = ()>
+    where
+        Conn: ConnectionThingy,
+        FS: futures::stream::Stream<Item = quinn::NewStream, Error = quinn::ConnectionError>
+            + 'static,
+    {
+        use futures::Stream;
         let outgoing_stream: Box<dyn Future<Item = (), Error = ()>> = Box::new(
             connection
                 .open_bi()
-                .map_err(|e| format_err!("failed to open stream: {}", e))
+                .map_err(|e| format_err!("failed to open stream: {:?}", e))
                 .then(move |stream| {
                     info!("Sending message to peer");
                     let s = stream.expect("Could not unwrap stream?");
@@ -405,6 +447,7 @@ impl Peer {
         );
 
         let shared = self.shared.clone();
+        use futures::Stream as FutureStream;
         self.runtime.spawn(incoming.for_each(move |conn| {
             let quinn::NewConnection {
                 incoming,
