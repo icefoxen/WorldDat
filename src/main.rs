@@ -9,6 +9,7 @@ extern crate structopt;
 extern crate url;
 
 extern crate blake2;
+extern crate bytes;
 extern crate chrono;
 #[macro_use]
 extern crate log;
@@ -29,6 +30,7 @@ use structopt::StructOpt;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
+mod connection_tests;
 mod hash;
 mod peer;
 
