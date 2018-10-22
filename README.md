@@ -38,7 +38,7 @@ simple to use, composable, robust, swift, easy to figure out and debug and incor
 into other systems, quite lightweight, data is tamperproof (censorproof or monitoring-proof
 is harder), transmission encrypted by default should help tho.
 
-Non-goals: permanent, anonymous, the fastest evar, does everything all on its own, changes teh world
+Non-goals: permanent, anonymous, the fastest evar, does everything all on its own, replaces everything in teh world
 
 Goals that are not things to worry about YET: Preventing sybil attacks/robust keygen, fairness in block allocation/incentives to seed/abuse prevention (see bittorrent, ipfs), NAT holepunching,
 

@@ -174,6 +174,10 @@ impl PeerMap {
             self.buckets[0].known_peers.sort();
         }
     }
+
+    pub fn lookup(&self, peer_id: PeerId) -> result::Result<ContactInfo, Vec<ContactInfo>> {
+        Err(vec![])
+    }
 }
 
 /// All parts of the peer state that get stuffed into an Arc
@@ -220,6 +224,50 @@ impl Peer {
         // Block on futures and run them to completion.
         self.runtime.run().map_err(Error::from)
     }
+
+    fn handle_message_from(
+        &mut self,
+        addr: SocketAddr,
+        msg: &Message,
+        state: Arc<RwLock<PeerSharedState>>,
+    ) {
+        match msg {
+            Message::Ping { id } => {
+                let my_id = state.read().unwrap().id;
+                self.send_to_peer(*id, Message::Pong { id: my_id });
+            }
+            Message::Pong { id } => {
+                let info = ContactInfo {
+                    peer_id: *id,
+                    address: addr,
+                };
+                let mut state = state.write().unwrap();
+                state.peermap.insert(info);
+            }
+            Message::FindPeer { id } => {
+                // if we know about that peer, send it back.
+                // Else, send findPeerResponsePeerNotFound
+                let map = &state.read().unwrap().peermap;
+                let resp = match map.lookup(*id) {
+                    Ok(contact) => Message::FindPeerResponsePeerFound { contact },
+                    Err(neighbors) => Message::FindPeerResponsePeerNotFound { id: *id, neighbors },
+                };
+                self.send_to_peer(*id, resp);
+            }
+            Message::FindPeerResponsePeerFound { contact } => {
+                // ping contact to see if it's legit
+                let my_id = state.read().unwrap().id;
+                self.send_to_peer(contact.peer_id, Message::Ping { id: my_id });
+            }
+            Message::FindPeerResponsePeerNotFound { id, neighbors } => {
+                for neighbor in neighbors {
+                    self.send_to_peer(neighbor.peer_id, Message::FindPeer { id: *id });
+                }
+            }
+        }
+    }
+
+    fn send_to_peer(&mut self, _peer_id: PeerId, _msg: Message) {}
 
     /// Sends the given message on the given stream, handling errors and such.
     /// Or rather, returns a new future which does that.
@@ -306,6 +354,7 @@ impl Peer {
     ) -> impl Future<Item = (), Error = ()>
     where
         Conn: ConnectionThingy,
+        // ST: Stream + 'static,
         FS: futures::stream::Stream<Item = quinn::NewStream, Error = quinn::ConnectionError>
             + 'static,
     {
@@ -340,6 +389,7 @@ impl Peer {
                             .map_err(|e| warn!("Incoming stream failed: {:?}", e)),
                         quinn::NewStream::Uni(_) => unimplemented!(),
                     }
+                    // Self::receive_message(stream)
                 }),
         );
 
