@@ -403,11 +403,34 @@ impl Peer {
     /// Starts the client, spawning a future that runs it on this `Peer`'s
     /// runtime.  Use `peer.runtime.run()` to actually drive it.
     pub fn start_outgoing(&mut self) -> Result<()> {
+
+
+use std::fs::OpenOptions;
+use slog;
+use slog::Drain;
+use slog_term;
+   let log_path = "test-outgoing.log";
+   let file = OpenOptions::new()
+      .create(true)
+      .write(true)
+      .truncate(true)
+      .open(log_path)
+      .unwrap();
+
+    let decorator = slog_term::PlainSyncDecorator::new(file);
+    let drain = slog_term::FullFormat::new(decorator).build().fuse();
+    // let drain = slog_async::Async::new(drain).build().fuse();
+
+    let root = slog::Logger::root(drain, o!());
+    slog_trace!(root, "outgoing");
+
         if let Some(ref bootstrap_peer) = self.options.bootstrap_peer {
             let mut builder = quinn::EndpointBuilder::from_config(quinn::Config {
                 max_remote_bi_streams: 64,
                 ..quinn::Config::default()
             });
+            builder
+            .logger(root);
 
             // if let Some(ref ca_path) = self.options.ca {
             //     builder.set_certificate_authority(&fs::read(&ca_path)?)?;
@@ -467,6 +490,26 @@ impl Peer {
     /// Start listening on a port for other peers to come
     /// talk to us.
     pub fn start_listener(&mut self) -> Result<()> {
+
+use std::fs::OpenOptions;
+use slog;
+use slog::Drain;
+use slog_term;
+   let log_path = "test-listener.log";
+   let file = OpenOptions::new()
+      .create(true)
+      .write(true)
+      .truncate(true)
+      .open(log_path)
+      .unwrap();
+
+    let decorator = slog_term::PlainSyncDecorator::new(file);
+    let drain = slog_term::FullFormat::new(decorator).build().fuse();
+    // let drain = slog_async::Async::new(drain).build().fuse();
+
+    let root = slog::Logger::root(drain, o!());
+    slog_trace!(root, "logging from listener");
+
         // TODO: prefer `listen_with_keys`.
         let mut builder = quinn::EndpointBuilder::from_config(quinn::Config {
             max_remote_bi_streams: 64,
@@ -556,9 +599,8 @@ mod tests {
     }
     #[test]
     fn test_client_connection() {
-        // ::setup_logging();
+        ::setup_logging();
 
-        /*
         lazy_static::initialize(&SERVER_THREAD);
 
         // TODO: Make sure it actually fails when no server is running!
@@ -576,6 +618,5 @@ mod tests {
         // Block on futures and run them to completion.
         peer.runtime.run().map_err(Error::from).unwrap();
         assert!(res.is_ok());
-        */
     }
 }

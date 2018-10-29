@@ -8,6 +8,13 @@ extern crate futures;
 extern crate structopt;
 extern crate url;
 
+
+#[macro_use]
+extern crate slog;
+extern crate slog_term;
+extern crate slog_async;
+
+
 extern crate blake2;
 extern crate bytes;
 extern crate chrono;
@@ -42,7 +49,7 @@ fn setup_logging() {
         .trace(Color::BrightBlue);
     // This sets up a `fern` logger and initializes `log`.
     fern::Dispatch::new()
-    // Formats logs
+        // Formats logs
         .format(move |out, message, record| {
             out.finish(format_args!(
                 "[{}][{:<5}][{}] {}",
@@ -51,13 +58,11 @@ fn setup_logging() {
                 record.target(),
                 message
             ))
-        })
-        .level(log::LevelFilter::Trace)
+        }).level(log::LevelFilter::Trace)
         .level_for("tokio_reactor", log::LevelFilter::Warn)
         .level_for("mio", log::LevelFilter::Warn)
         .level_for("rustls", log::LevelFilter::Warn)
-
-    // Hooks up console output.
+        // Hooks up console output.
         .chain(std::io::stdout())
         .apply()
         .expect("Could not init logging!");
