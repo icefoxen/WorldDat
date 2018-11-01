@@ -13,12 +13,14 @@ use peer;
 /// using `tokio_io::AllowStdIo`, I think.
 ///
 /// Eh, part of it is that Read and Write are u8-specific, but still...
+#[allow(dead_code)]
 pub struct TestStream {
     send_stream: mpsc::Sender<u8>,
     recv_stream: mpsc::Receiver<u8>,
 }
 
 impl TestStream {
+    #[allow(dead_code)]
     pub fn new_pair() -> (Self, Self) {
         let (s1, r1) = mpsc::channel();
         let (s2, r2) = mpsc::channel();
@@ -47,7 +49,7 @@ impl quinn::Write for TestStream {
         Ok(futures::Async::Ready(()))
     }
 
-    fn reset(&mut self, error_code: u16) {}
+    fn reset(&mut self, _error_code: u16) {}
 }
 
 impl io::Write for TestStream {

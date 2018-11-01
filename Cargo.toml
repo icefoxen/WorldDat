@@ -28,3 +28,5 @@ rmp-serde = "0.13"
 slog = { version = "2", features = ["max_level_trace"] }
 slog-term = "2"
 slog-async = "2"
+slog-scope = "4"
+slog-stdlog = "3"

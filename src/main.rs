@@ -4,13 +4,14 @@ extern crate tokio_io;
 #[macro_use]
 extern crate failure;
 extern crate futures;
-#[macro_use]
 extern crate structopt;
 extern crate url;
 
-#[macro_use]
+#[macro_use(slog_o, slog_trace)]
 extern crate slog;
 extern crate slog_async;
+extern crate slog_scope;
+extern crate slog_stdlog;
 extern crate slog_term;
 
 extern crate blake2;
@@ -39,6 +40,9 @@ mod connection_tests;
 mod hash;
 mod peer;
 
+#[cfg(test)]
+mod tests;
+
 fn setup_logging() {
     use fern::colors::{Color, ColoredLevelConfig};
     let colors = ColoredLevelConfig::default()
@@ -52,7 +56,10 @@ fn setup_logging() {
             out.finish(format_args!(
                 "[{}][{:<5}][{}] {}",
                 chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
-                colors.color(record.level()).to_string(),
+                // BUGGO TODO: The coloring breaks the justification...
+                // Probably 'cause the control characters mess with the
+                // character count.  :|
+                colors.color(record.level()),
                 record.target(),
                 message
             ))
@@ -89,6 +96,11 @@ pub struct PeerOpt {
     /// TLS certificate in PEM format
     #[structopt(parse(from_os_str), short = "c", long = "cert")]
     cert: PathBuf,
+
+    /// Whether or not to output low-level QUIC protocol logging,
+    /// useful for debugging
+    #[structopt(long = "logproto")]
+    logproto: bool,
 }
 
 fn main() {
