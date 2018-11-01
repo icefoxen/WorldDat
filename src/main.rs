@@ -8,12 +8,10 @@ extern crate futures;
 extern crate structopt;
 extern crate url;
 
-
 #[macro_use]
 extern crate slog;
-extern crate slog_term;
 extern crate slog_async;
-
+extern crate slog_term;
 
 extern crate blake2;
 extern crate bytes;

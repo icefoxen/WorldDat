@@ -5,7 +5,7 @@ authors = ["Simon Heath <icefoxen@gmail.com>"]
 
 [dependencies]
 #quinn = "0.1"
-quinn = {git = "https://github.com/djc/quinn.git"}
+quinn = {git = "https://github.com/djc/quinn.git", features = ["dangerous_configuration"]}
 tokio = "0.1"
 tokio-io = "0.1"
 failure = "0.1"

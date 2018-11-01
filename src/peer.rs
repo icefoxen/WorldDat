@@ -215,11 +215,10 @@ impl Peer {
     pub fn run(&mut self) -> Result<()> {
         // For now we always listen...
         info!("Bootstrap peer: {:?}", self.options.bootstrap_peer);
-        self.start_outgoing()?;
 
         // Start each the client and server futures.
         info!("Starting server on {}", self.options.listen);
-        self.start_listener()?;
+        self.start()?;
 
         // Block on futures and run them to completion.
         self.runtime.run().map_err(Error::from)
@@ -335,9 +334,8 @@ impl Peer {
                     .and_then(|stream| {
                         trace!("Trying to shut down stream");
                         tokio::io::shutdown(stream)
-                            .and_then(|v| {
+                            .inspect(|_v| {
                                 trace!("Done!");
-                                future::ok(v)
                             }).map_err(|e| warn!("Failed to shut down stream: {}", e))
                     }).map(move |_| info!("request complete"))
             })
@@ -402,119 +400,137 @@ impl Peer {
 
     /// Starts the client, spawning a future that runs it on this `Peer`'s
     /// runtime.  Use `peer.runtime.run()` to actually drive it.
-    pub fn start_outgoing(&mut self) -> Result<()> {
+    // pub fn start_outgoing(&mut self) -> Result<()> {
+    //     use slog;
+    //     use slog::Drain;
+    //     use slog_term;
+    //     use std::fs::OpenOptions;
+    //     let log_path = "test-outgoing.log";
+    //     let file = OpenOptions::new()
+    //         .create(true)
+    //         .write(true)
+    //         .truncate(true)
+    //         .open(log_path)
+    //         .unwrap();
 
+    //     let decorator = slog_term::PlainSyncDecorator::new(file);
+    //     let drain = slog_term::FullFormat::new(decorator).build().fuse();
+    //     // let drain = slog_async::Async::new(drain).build().fuse();
 
-use std::fs::OpenOptions;
-use slog;
-use slog::Drain;
-use slog_term;
-   let log_path = "test-outgoing.log";
-   let file = OpenOptions::new()
-      .create(true)
-      .write(true)
-      .truncate(true)
-      .open(log_path)
-      .unwrap();
+    //     let root = slog::Logger::root(drain, o!());
+    //     slog_trace!(root, "outgoing");
 
-    let decorator = slog_term::PlainSyncDecorator::new(file);
-    let drain = slog_term::FullFormat::new(decorator).build().fuse();
-    // let drain = slog_async::Async::new(drain).build().fuse();
+    //     if let Some(ref bootstrap_peer) = self.options.bootstrap_peer {
+    //         let mut builder = quinn::EndpointBuilder::from_config(quinn::Config {
+    //             max_remote_bi_streams: 64,
+    //             ..quinn::Config::default()
+    //         });
+    //         builder.logger(root);
 
-    let root = slog::Logger::root(drain, o!());
-    slog_trace!(root, "outgoing");
+    //         // Mongle TLS keys
+    //         let keys = {
+    //             let mut reader = io::BufReader::new(
+    //                 fs::File::open(&self.options.key).context("failed to read private key")?,
+    //             );
+    //             pemfile::rsa_private_keys(&mut reader)
+    //                 .map_err(|_| err_msg("failed to read private key"))?
+    //         };
+    //         let cert_chain = {
+    //             let mut reader = io::BufReader::new(
+    //                 fs::File::open(&self.options.cert).context("failed to read private key")?,
+    //             );
+    //             pemfile::certs(&mut reader).map_err(|_| err_msg("failed to read certificates"))?
+    //         };
+    //         builder.set_certificate(cert_chain, keys[0].clone())?;
 
-        if let Some(ref bootstrap_peer) = self.options.bootstrap_peer {
-            let mut builder = quinn::EndpointBuilder::from_config(quinn::Config {
-                max_remote_bi_streams: 64,
-                ..quinn::Config::default()
-            });
-            builder
-            .logger(root);
+    //         let mut client_config = quinn::ClientConfigBuilder::new();
 
-            // if let Some(ref ca_path) = self.options.ca {
-            //     builder.set_certificate_authority(&fs::read(&ca_path)?)?;
-            // }
-            let (endpoint, driver, mut _incoming) = builder.bind("[::]:0")?;
+    //         // We basically by definition don't know the peer's cert, so
+    //         // this is ok.
+    //         client_config.accept_insecure_certs();
+    //         let client_config = client_config.build();
 
-            let start = Instant::now();
+    //         let (endpoint, driver, mut _incoming) = builder.bind("[::]:0")?;
 
-            let addr = bootstrap_peer
-                .with_default_port(|_| Ok(4433))?
-                .to_socket_addrs()?
-                .next()
-                .ok_or(format_err!("couldn't resolve bootstrap peer to an address"))?;
-            // Copy self.shared to move into closure
-            let shared = self.shared.clone();
-            let future1: Box<dyn Future<Item = (), Error = ()>> = Box::new(
-                endpoint
-                    .connect(&addr, "localhost")?
-                    .map_err(|e| error!("failed to connect: {}", e))
-                    .and_then(move |conn: quinn::NewClientConnection| {
-                        info!(
-                            "Connection established at {}",
-                            duration_secs(&start.elapsed())
-                        );
-                        let quinn::NewClientConnection {
-                            connection,
-                            incoming,
-                            session_tickets: _session_tickets,
-                        } = conn;
-                        Self::talk_to_peer(connection, incoming, shared)
-                    }),
-            );
+    //         let start = Instant::now();
 
-            let future2: Box<dyn Future<Item = (), Error = ()>> =
-                Box::new(driver.map_err(|e| eprintln!("IO error: {}", e)));
+    //         let addr = bootstrap_peer
+    //             .with_default_port(|_| Ok(4433))?
+    //             .to_socket_addrs()?
+    //             .next()
+    //             .ok_or(format_err!("couldn't resolve bootstrap peer to an address"))?;
+    //         // Copy self.shared to move into closure
+    //         let shared = self.shared.clone();
+    //         let future1: Box<dyn Future<Item = (), Error = ()>> = Box::new(
+    //             endpoint
+    //                 .connect_with(&client_config, &addr, "localhost")?
+    //                 .map_err(|e| error!("failed to connect: {}", e))
+    //                 .and_then(move |conn: quinn::NewClientConnection| {
+    //                     info!(
+    //                         "Connection established at {}",
+    //                         duration_secs(&start.elapsed())
+    //                     );
+    //                     let quinn::NewClientConnection {
+    //                         connection,
+    //                         incoming,
+    //                         session_tickets: _session_tickets,
+    //                     } = conn;
+    //                     Self::talk_to_peer(connection, incoming, shared)
+    //                 }),
+    //         );
 
-            // This too half a fucking hour to figure out,
-            // after I'd already been told the answer.
-            // select() returns a future that yields a tuple
-            // for both the Item type AND THE Error TYPE.
-            // NOWHERE did it tell me that the type mismatch
-            // was in the Error type!
-            let v: Box<dyn Future<Item = (), Error = ()>> = Box::new(
-                future1
-                    .select(future2)
-                    .map(|((), _select_next)| ())
-                    .map_err(|_| ()),
-            );
+    //         let future2: Box<dyn Future<Item = (), Error = ()>> =
+    //             Box::new(driver.map_err(|e| eprintln!("IO error: {}", e)));
 
-            info!("Trying to start outgoing to address {}", addr);
-            self.runtime.spawn(v);
-        }
+    //         // This too half a fucking hour to figure out,
+    //         // after I'd already been told the answer.
+    //         // select() returns a future that yields a tuple
+    //         // for both the Item type AND THE Error TYPE.
+    //         // NOWHERE did it tell me that the type mismatch
+    //         // was in the Error type!
+    //         let v: Box<dyn Future<Item = (), Error = ()>> = Box::new(
+    //             future1
+    //                 .select(future2)
+    //                 .map(|((), _select_next)| ())
+    //                 .map_err(|_| ()),
+    //         );
 
-        Ok(())
-    }
+    //         info!("Trying to start outgoing to address {}", addr);
+    //         self.runtime.spawn(v);
+    //     }
+
+    //     Ok(())
+    // }
 
     /// Start listening on a port for other peers to come
-    /// talk to us.
-    pub fn start_listener(&mut self) -> Result<()> {
+    /// talk to us,
+    /// and if we know about a bootstrap peer then we also attempt to talk to it.
+    pub fn start(&mut self) -> Result<()> {
+        use slog;
+        use slog::Drain;
+        use slog_term;
+        use std::fs::OpenOptions;
+        let log_path = "test-listener.log";
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(log_path)
+            .unwrap();
 
-use std::fs::OpenOptions;
-use slog;
-use slog::Drain;
-use slog_term;
-   let log_path = "test-listener.log";
-   let file = OpenOptions::new()
-      .create(true)
-      .write(true)
-      .truncate(true)
-      .open(log_path)
-      .unwrap();
+        let decorator = slog_term::PlainSyncDecorator::new(file);
+        let drain = slog_term::FullFormat::new(decorator).build().fuse();
+        // let drain = slog_async::Async::new(drain).build().fuse();
 
-    let decorator = slog_term::PlainSyncDecorator::new(file);
-    let drain = slog_term::FullFormat::new(decorator).build().fuse();
-    // let drain = slog_async::Async::new(drain).build().fuse();
-
-    let root = slog::Logger::root(drain, o!());
-    slog_trace!(root, "logging from listener");
+        let root = slog::Logger::root(drain, o!());
+        slog_trace!(root, "logging from listener");
 
         // TODO: prefer `listen_with_keys`.
         let mut builder = quinn::EndpointBuilder::from_config(quinn::Config {
             max_remote_bi_streams: 64,
             ..quinn::Config::default()
         });
+        builder.logger(root);
 
         // Mongle TLS keys
         let keys = {
@@ -531,8 +547,47 @@ use slog_term;
             pemfile::certs(&mut reader).map_err(|_| err_msg("failed to read certificates"))?
         };
         builder.set_certificate(cert_chain, keys[0].clone())?;
+        // TODO: Use listen_with_keys() instead.
+        builder.listen();
 
-        let (_endpoint, driver, incoming) = builder.bind(self.options.listen)?;
+        let mut client_config = quinn::ClientConfigBuilder::new();
+
+        // We basically by definition don't know the peer's cert, so
+        // this is ok.
+        client_config.accept_insecure_certs();
+        let client_config = client_config.build();
+
+        let (endpoint, driver, incoming) = builder.bind(self.options.listen)?;
+
+        let start = Instant::now();
+
+        if let Some(ref bootstrap_peer) = self.options.bootstrap_peer {
+            let addr = bootstrap_peer
+                .with_default_port(|_| Ok(4433))?
+                .to_socket_addrs()?
+                .next()
+                .ok_or(format_err!("couldn't resolve bootstrap peer to an address"))?;
+            // Copy self.shared to move into closure
+            let shared = self.shared.clone();
+            let bootstrap_connection_future: Box<dyn Future<Item = (), Error = ()>> = Box::new(
+                endpoint
+                    .connect_with(&client_config, &addr, "localhost")?
+                    .map_err(|e| error!("failed to connect: {}", e))
+                    .and_then(move |conn: quinn::NewClientConnection| {
+                        info!(
+                            "Connection established at {}",
+                            duration_secs(&start.elapsed())
+                        );
+                        let quinn::NewClientConnection {
+                            connection,
+                            incoming,
+                            session_tickets: _session_tickets,
+                        } = conn;
+                        Self::talk_to_peer(connection, incoming, shared)
+                    }),
+            );
+            self.runtime.spawn(bootstrap_connection_future);
+        };
 
         info!(
             "Bound to {}, listening for incoming connections.",
@@ -553,10 +608,9 @@ use slog_term;
                 connection.remote_address(),
                 connection.protocol()
             );
-
-            current_thread::spawn(Self::talk_to_peer(connection, incoming, shared));
-            Ok(())
+            Self::talk_to_peer(connection, incoming, shared)
         }));
+        // current_thread::spawn(outgoing_connection_future);
 
         // TODO: Is this block_on() what we actually want?
         // It is now, yes.  That will run ALL futures, and return
@@ -564,59 +618,5 @@ use slog_term;
         // socket closes.
         self.runtime.block_on(driver)?;
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-
-    use std::net::ToSocketAddrs;
-    use std::thread;
-
-    use failure::{self, Error};
-    use lazy_static;
-    use url;
-
-    use peer;
-    use PeerOpt;
-
-    // This isn't necessarily the best way to do this, but...
-    lazy_static! {
-        static ref SERVER_THREAD: thread::JoinHandle<Result<(), failure::Error>> = {
-            thread::spawn(move || {
-                let mut peer = peer::Peer::new(PeerOpt {
-                    bootstrap_peer: None,
-                    listen: "[::]:5544".to_socket_addrs().unwrap().next().unwrap(),
-                    ca: None,
-                    key: "certs/server.rsa".into(),
-                    cert: "certs/server.chain".into(),
-                });
-
-                peer.run().expect("Could not run peer?");
-                Ok(())
-            })
-        };
-    }
-    #[test]
-    fn test_client_connection() {
-        ::setup_logging();
-
-        lazy_static::initialize(&SERVER_THREAD);
-
-        // TODO: Make sure it actually fails when no server is running!
-        // Currently it doesn't, it just times out... eventually.
-        let mut peer = peer::Peer::new(PeerOpt {
-            bootstrap_peer: Some(url::Url::parse("quic://[::1]:5544/").unwrap()),
-            listen: "[::]:5545".to_socket_addrs().unwrap().next().unwrap(),
-            ca: Some("certs/ca.der".into()),
-            key: "certs/server.rsa".into(),
-            cert: "certs/server.chain".into(),
-        });
-
-        let res = peer.start_outgoing();
-
-        // Block on futures and run them to completion.
-        peer.runtime.run().map_err(Error::from).unwrap();
-        assert!(res.is_ok());
     }
 }
