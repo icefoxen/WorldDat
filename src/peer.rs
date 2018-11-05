@@ -188,15 +188,15 @@ impl PeerMap {
 /// All parts of the peer state that get stuffed into an Arc
 /// and potentially shared between threads.
 pub struct PeerSharedState {
-    id: PeerId,
-    peermap: PeerMap,
+    pub id: PeerId,
+    pub peermap: PeerMap,
 }
 
 /// All peer state stuff.
 pub struct Peer {
-    options: PeerOpt,
-    runtime: Runtime,
-    shared: Arc<RwLock<PeerSharedState>>,
+    pub options: PeerOpt,
+    pub runtime: Runtime,
+    pub shared: Arc<RwLock<PeerSharedState>>,
 }
 
 impl Peer {
