@@ -36,12 +36,13 @@ use structopt::StructOpt;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-mod connection_tests;
-mod hash;
-mod peer;
+// mod connection_tests;
+// mod hash;
+// mod peer;
+mod peer2;
 
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod tests;
 
 fn setup_logging() {
     use fern::colors::{Color, ColoredLevelConfig};
@@ -106,6 +107,6 @@ pub struct PeerOpt {
 fn main() {
     setup_logging();
     let opt = PeerOpt::from_args();
-    let mut peer = peer::Peer::new(opt);
+    let mut peer = peer2::Peer::new(opt);
     peer.run().expect("Peer did not exit successfully?");
 }

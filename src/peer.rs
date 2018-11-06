@@ -407,11 +407,31 @@ impl Peer {
     pub fn start(&mut self) -> Result<()> {
         // SETUP BIG PILES OF CONFIG STUFF
 
+        // Mongle TLS keys
+        let keys = {
+            let mut reader = io::BufReader::new(
+                fs::File::open(&self.options.key).context("failed to read private key")?,
+            );
+            pemfile::rsa_private_keys(&mut reader)
+                .map_err(|_| err_msg("failed to read private key"))?
+        };
+        let cert_chain = {
+            let mut reader = io::BufReader::new(
+                fs::File::open(&self.options.cert).context("failed to read private key")?,
+            );
+            pemfile::certs(&mut reader).map_err(|_| err_msg("failed to read certificates"))?
+        };
+
         // TODO: prefer `listen_with_keys`?
         let mut builder = quinn::EndpointBuilder::from_config(quinn::Config {
             max_remote_bi_streams: 64,
             ..quinn::Config::default()
         });
+        builder
+            .set_certificate(cert_chain, keys[0].clone())?
+            // TODO: Use listen_with_keys() instead?
+            .listen();
+
         if self.options.logproto {
             use slog;
             use slog::Drain;
@@ -436,30 +456,11 @@ impl Peer {
             builder.logger(root);
         }
 
-        // Mongle TLS keys
-        let keys = {
-            let mut reader = io::BufReader::new(
-                fs::File::open(&self.options.key).context("failed to read private key")?,
-            );
-            pemfile::rsa_private_keys(&mut reader)
-                .map_err(|_| err_msg("failed to read private key"))?
-        };
-        let cert_chain = {
-            let mut reader = io::BufReader::new(
-                fs::File::open(&self.options.cert).context("failed to read private key")?,
-            );
-            pemfile::certs(&mut reader).map_err(|_| err_msg("failed to read certificates"))?
-        };
-        builder.set_certificate(cert_chain, keys[0].clone())?;
-        // TODO: Use listen_with_keys() instead?
-        builder.listen();
-
-        let mut client_config = quinn::ClientConfigBuilder::new();
-
+        let mut client_config_builder = quinn::ClientConfigBuilder::new();
         // We basically by definition don't know the peer's cert, so
         // this is ok.
-        client_config.accept_insecure_certs();
-        let client_config = client_config.build();
+        client_config_builder.accept_insecure_certs();
+        let client_config = client_config_builder.build();
 
         // ACTUALLY CREATE THE CONNECTION
 
