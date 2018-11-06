@@ -107,6 +107,6 @@ pub struct PeerOpt {
 fn main() {
     setup_logging();
     let opt = PeerOpt::from_args();
-    let mut peer = peer2::Peer::new(opt);
+    let mut peer = peer2::Peer::new(opt).expect("Could not create peer struct?");
     peer.run().expect("Peer did not exit successfully?");
 }
