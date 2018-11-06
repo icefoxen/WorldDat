@@ -25,13 +25,6 @@ To test:
 
  * `cargo test`
 
-## To do
-
-Make a more proper comparison to IPFS: fewer layers of abstraction, easier/simpler protocol, client-only
-implementations, easier ffi for official implementation. Generally just tries to move blocks
-around instead of doing Everything. Forms a useful basis instead of a whole system,
-interoperates with existing systems instead of replacing them.
-
 ## Goals
 
 simple to use, composable, robust, swift, easy to figure out and debug and incorporate
@@ -84,7 +77,20 @@ These are analogous to Kademila (ping, store, find node, find value).  So our op
  * Find peers that have value
  * Announce value
 
-Might the `crossbeam` crate have some useful bits and pieces in it for async programming?
+
+## To do
+
+Make a more proper comparison to IPFS: fewer layers of abstraction, easier/simpler protocol, client-only
+implementations, easier ffi for official implementation. Generally just tries to move blocks
+around instead of doing Everything. Forms a useful basis instead of a whole system,
+interoperates with existing systems instead of replacing them.
+
+## To do later
+
+ * Make a file-like API atop raw blocks
+ * Play with erasure codes: https://storj.io/blog/2018/11/replication-is-bad-for-decentralized-storage-part-1-erasure-codes-for-fun-and-profit/
+ * Make a C-compatible FFI API
+ * Might the `crossbeam` crate have some useful bits and pieces in it for async programming?  Probably, but not worth checking out yet.
 
 ## References
 

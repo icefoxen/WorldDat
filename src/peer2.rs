@@ -96,6 +96,42 @@ impl Peer {
             Ok(())
         }));
 
+        // Client stuff.
+        if let Some(ref bootstrap_url) = self.options.bootstrap_peer {
+            use std::net::ToSocketAddrs;
+            let mut client_builder = quinn::ClientConfigBuilder::new();
+            // We basically by definition don't know the peer's cert, so
+            // this is ok.
+            client_builder.accept_insecure_certs();
+            let client_config = client_builder.build();
+
+            // TODO: Make this something nicer than a URL
+            let remote = bootstrap_url
+                .with_default_port(|_| Ok(4433))?
+                .to_socket_addrs()?
+                .next()
+                .ok_or(format_err!("couldn't resolve to an address"))?;
+
+            // let host_str = bootstrap_url
+            //     .host_str()
+            //     .ok_or(format_err!("URL missing host"))?;
+            self.runtime.spawn(
+                endpoint
+                    .connect_with(&client_config, &remote, "host_str")?
+                    .map_err(|e| format_err!("failed to connect: {}", e))
+                    .and_then(move |conn| {
+                        info!("Connected to {:?}", conn.connection.remote_address());
+                        conn.connection
+                            .close(0, b"done")
+                            .map_err(|_| unreachable!())
+                    }).map_err(|e| warn!("Error with connection? {:?}", e))
+                    .and_then(move |_| {
+                        info!("Connection done?");
+                        futures::future::ok(())
+                    }),
+            );
+        }
+
         self.runtime.block_on(driver)?;
 
         Ok(())
