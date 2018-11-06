@@ -1,9 +1,10 @@
 use std::path::Path;
 
 use failure::{err_msg, Error, ResultExt};
-use futures::Stream;
+use futures::{Future, Stream};
 use quinn;
 use rustls;
+use tokio;
 use tokio::runtime::current_thread::Runtime;
 
 use crate::PeerOpt;
@@ -85,6 +86,7 @@ impl Peer {
         };
 
         // Start listening for connections.
+        info!("Binding to {:?}", self.options.listen);
         let (endpoint, driver, incoming) = builder.bind(self.options.listen)?;
         self.runtime.spawn(incoming.for_each(move |conn| {
             info!(
