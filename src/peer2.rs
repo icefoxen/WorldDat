@@ -133,32 +133,15 @@ impl Peer {
             // let host_str = bootstrap_url
             //     .host_str()
             //     .ok_or(format_err!("URL missing host"))?;
-            // let outgoing_future: Box<dyn Future<Item = (), Error = ()>> = Box::new(
-            //     endpoint
-            //         .connect_with(&client_config, &remote, "host_str")?
-            //         .map_err(|e| format_err!("failed to connect: {}", e))
-            //         .and_then(Self::handle_outgoing),
-            // );
-            self.runtime.spawn(
+
+            let bootstrap_connection_future: Box<dyn Future<Item = (), Error = ()>> = Box::new(
                 endpoint
                     .connect_with(&client_config, &remote, "host_str")?
-                    .map_err(|e| format_err!("failed to connect: {}", e))
-                    // .and_then(Self::handle_outgoing)
-                    // .map_err(|e| format_err!("FDASFSDA: {}", e))
-                    .and_then(move |conn| {
-                        info!("Connected to {:?}", conn.connection.remote_address());
-                        Self::handle_outgoing(conn);
-                        // conn.connection
-                        //     .close(0, b"done")
-                        //     .map_err(|_| unreachable!())
-                        // Ok(conn)
-                        Ok(())
-                    }).map_err(|e| warn!("Error with connection? {:?}", e))
-                    .and_then(move |_| {
-                        info!("Connection done?");
-                        futures::future::ok(())
-                    }),
+                    .map_err(|e| error!("failed to connect: {}", e))
+                    .and_then(Self::handle_outgoing)
+                    .inspect(|()| info!("Disconnected from bootstrap")),
             );
+            self.runtime.spawn(bootstrap_connection_future);
         }
 
         self.runtime.block_on(driver)?;
