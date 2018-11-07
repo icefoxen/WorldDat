@@ -71,20 +71,82 @@ impl Peer {
     }
 
     /// Needs to return a `Result` so it can be used as a future.
-    fn handle_incoming(conn: quinn::NewConnection) -> Result<(), ()> {
+    fn handle_incoming(conn: quinn::NewConnection) -> impl Future<Item = (), Error = ()> {
         info!(
             "Incoming connection from: {:?}",
             conn.connection.remote_address()
         );
-        Ok(())
+        let quinn::NewConnection {
+            connection,
+            incoming,
+        } = conn;
+        Self::talk_to_peer(connection, incoming)
     }
 
-    fn handle_outgoing(conn: quinn::NewClientConnection) -> Box<dyn Future<Item = (), Error = ()>> {
+    fn handle_outgoing(conn: quinn::NewClientConnection) -> impl Future<Item = (), Error = ()> {
         info!(
             "Connected to bootstrap peer: {:?}",
             conn.connection.remote_address()
         );
-        Box::new(conn.connection.close(0, b"done"))
+
+        let quinn::NewClientConnection {
+            connection,
+            incoming,
+            session_tickets: _session_tickets,
+        } = conn;
+        Self::talk_to_peer(connection, incoming)
+    }
+
+    /// Implements the state machine of actually talking to a peer...
+    fn talk_to_peer(
+        conn: quinn::Connection,
+        incoming: quinn::IncomingStreams,
+    ) -> impl Future<Item = (), Error = ()> {
+        let outgoing_stream: Box<dyn Future<Item = (), Error = ()>> = Box::new(
+            conn.open_bi()
+                .map_err(|e| format_err!("failed to open stream: {:?}", e))
+                .then(move |stream| {
+                    info!("Sending message to peer");
+                    let s = stream.expect("Could not unwrap stream?");
+                    let msg = b"Foo!";
+                    tokio::io::write_all(s, msg)
+                        .and_then(|(stream, _vec)| tokio::io::shutdown(stream))
+                        .map_err(|e| warn!("Failed to send request: {}", e))
+                        .map(move |_| debug!("Message send complete: {:X?}", msg))
+                }),
+        );
+
+        // For each incoming stream, try to receive a message on it.
+        // TODO: Should this spawn a new task for each stream?  mmmmmmmmaybe.
+        let incoming_streams: Box<dyn Future<Item = (), Error = ()>> = Box::new(
+            incoming
+                .map_err(|e| warn!("Incoming stream failed: {:?}", e))
+                .for_each(move |stream: quinn::NewStream| {
+                    info!("Peer created incoming stream");
+                    // Don't bother with uni-directional streams yet.
+                    match stream {
+                        quinn::NewStream::Bi(bi_stream) => quinn::read_to_end(bi_stream, 64 * 1024)
+                            .map_err(|e| format_err!("failed reading request: {}", e))
+                            .inspect(|(_stream, res)| {
+                                info!("Got message: {:?}", res);
+                            }).map_err(|e| warn!("Incoming stream failed: {:?}", e))
+                            .and_then(|(stream, _res)| {
+                                tokio::io::shutdown(stream)
+                                    .map(|_| ())
+                                    .map_err(|e| warn!("Error shutting down stream: {:?}", e))
+                            }),
+                        quinn::NewStream::Uni(_) => unimplemented!(),
+                    }
+                }),
+        );
+
+        let merged_stream_handlers = outgoing_stream.join(incoming_streams).map(|((), ())| ());
+
+        merged_stream_handlers.and_then(move |()| {
+            // info!("Closing connection to {:?}", conn.remote_address());
+            // conn.close(0, b"done")
+            Ok(())
+        })
     }
 
     pub fn run(&mut self) -> Result<(), Error> {
