@@ -26,6 +26,57 @@ fn escaped(bytes: &[u8]) -> String {
     escaped
 }
 
+fn handle_connection(conn: quinn::NewConnection) {
+    let quinn::NewConnection {
+        incoming,
+        connection,
+    } = conn;
+    info!("Got connection: {:?}", connection.remote_address());
+    // Each stream initiated by the client constitutes a new request.
+    tokio_current_thread::spawn(
+        incoming
+            .map_err(move |e| info!("connection terminated: {:?}", e))
+            .for_each(move |stream| {
+                handle_request(stream);
+                Ok(())
+            }),
+    );
+}
+
+fn handle_request(stream: quinn::NewStream) {
+    let stream = match stream {
+        quinn::NewStream::Bi(stream) => stream,
+        quinn::NewStream::Uni(_) => unreachable!(), // config.max_remote_uni_streams is defaulted to 0
+    };
+
+    tokio_current_thread::spawn(
+        quinn::read_to_end(stream, 64 * 1024) // Read the request, which must be at most 64KiB
+            .map_err(|e| format_err!("failed reading request: {}", e))
+            .and_then(move |(stream, req)| {
+                use std::ascii;
+                use std::str;
+                let mut escaped = String::new();
+                for &x in &req[..] {
+                    let part = ascii::escape_default(x).collect::<Vec<_>>();
+                    escaped.push_str(str::from_utf8(&part).unwrap());
+                }
+                info!("got request: \"{:?}\"", escaped);
+                // Execute the request
+                // let resp = b"Bar!!";
+                // // Write the response
+                // tokio::io::write_all(stream, resp)
+                //     .map_err(|e| format_err!("failed to send response: {}", e))
+                Ok((stream, req))
+            })
+            // Gracefully terminate the stream
+            .and_then(|(stream, _)| {
+                tokio::io::shutdown(stream)
+                    .map_err(|e| format_err!("failed to shutdown stream: {}", e))
+            }).map(move |_| info!("request complete"))
+            .map_err(move |e| error!("request failed: {:?}", e)),
+    )
+}
+
 impl Peer {
     pub fn new(options: PeerOpt) -> Result<Self, Error> {
         let runtime = Runtime::new()?;
@@ -200,7 +251,10 @@ impl Peer {
         // Start listening for connections.
         info!("Binding to {:?}", self.options.listen);
         let (endpoint, driver, incoming) = builder.bind(self.options.listen)?;
-        self.runtime.spawn(incoming.for_each(Self::handle_incoming));
+        self.runtime.spawn(incoming.for_each(move |conn| {
+            handle_connection(conn);
+            Ok(())
+        }));
 
         // Client stuff.
         if let Some(ref bootstrap_addr) = self.options.bootstrap_peer {
