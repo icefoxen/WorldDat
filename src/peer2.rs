@@ -84,11 +84,7 @@ impl Peer {
             "Connected to bootstrap peer: {:?}",
             conn.connection.remote_address()
         );
-        Box::new(
-            conn.connection
-                .close(0, b"done")
-                .map_err(|_| unreachable!()),
-        )
+        Box::new(conn.connection.close(0, b"done"))
     }
 
     pub fn run(&mut self) -> Result<(), Error> {
