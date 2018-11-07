@@ -27,6 +27,9 @@ fn escaped(bytes: &[u8]) -> String {
 }
 impl Peer {
     pub fn new(options: PeerOpt) -> Result<Self, Error> {
+        // We must create the `Runtime` even though we're just handling
+        // `current_thread::spawn()` stuff, 'cause otherwise... I don't even
+        // know.  Bah.
         let runtime = Runtime::new()?;
         Ok(Peer { options, runtime })
     }
@@ -86,19 +89,19 @@ impl Peer {
         conn: quinn::Connection,
         incoming: quinn::IncomingStreams,
     ) -> impl Future<Item = (), Error = ()> {
-        // let outgoing_stream: Box<dyn Future<Item = (), Error = ()>> = Box::new(
-        //     conn.open_bi()
-        //         .map_err(|e| format_err!("failed to open stream: {:?}", e))
-        //         .then(move |stream| {
-        //             info!("Sending message to peer");
-        //             let s = stream.expect("Could not unwrap stream?");
-        //             let msg = b"Foo!";
-        //             tokio::io::write_all(s, msg)
-        //                 .and_then(|(stream, _vec)| tokio::io::shutdown(stream))
-        //                 .map_err(|e| warn!("Failed to send request: {}", e))
-        //                 .map(move |_| debug!("Message send complete: {:X?}", msg))
-        //         }),
-        // );
+        let outgoing_stream: Box<dyn Future<Item = (), Error = ()>> = Box::new(
+            conn.open_bi()
+                .map_err(|e| format_err!("failed to open stream: {:?}", e))
+                .then(move |stream| {
+                    info!("Sending message to peer");
+                    let s = stream.expect("Could not unwrap stream?");
+                    let msg = b"Foo!";
+                    tokio::io::write_all(s, msg)
+                        .and_then(|(stream, _vec)| tokio::io::shutdown(stream))
+                        .map_err(|e| warn!("Failed to send request: {}", e))
+                        .map(move |_| debug!("Message send complete: {:X?}", msg))
+                }),
+        );
 
         let handle_stream = move |bi_stream| {
             quinn::read_to_end(bi_stream, 64 * 1024)
@@ -145,7 +148,8 @@ impl Peer {
         );
 
         // let merged_stream_handlers = outgoing_stream.join(incoming_streams).map(|((), ())| ());
-        let merged_stream_handlers = incoming_streams;
+        // let merged_stream_handlers = incoming_streams;
+        let merged_stream_handlers = outgoing_stream;
 
         merged_stream_handlers.and_then(move |()| {
             // info!("Closing connection to {:?}", conn.remote_address());
@@ -211,7 +215,7 @@ impl Peer {
         );
     }
 
-    fn handle_outgoing(conn: quinn::NewClientConnection) -> impl Future<Item = (), Error = ()> {
+    fn handle_outgoing(conn: quinn::NewClientConnection) {
         info!(
             "Connected to bootstrap peer: {:?}",
             conn.connection.remote_address()
@@ -222,7 +226,23 @@ impl Peer {
             incoming,
             session_tickets: _session_tickets,
         } = conn;
-        Self::talk_to_peer(connection, incoming)
+        // Self::talk_to_peer(connection, incoming)
+
+        let outgoing_stream: Box<dyn Future<Item = (), Error = ()>> = Box::new(
+            connection
+                .open_bi()
+                .map_err(|e| format_err!("failed to open stream: {:?}", e))
+                .then(move |stream| {
+                    info!("Sending message to peer");
+                    let s = stream.expect("Could not unwrap stream?");
+                    let msg = b"Foo!";
+                    tokio::io::write_all(s, msg)
+                        .and_then(|(stream, _vec)| tokio::io::shutdown(stream))
+                        .map_err(|e| warn!("Failed to send request: {}", e))
+                        .map(move |_| debug!("Message send complete: {:X?}", msg))
+                }).inspect(|_| info!("Disconnecting from bootstrap")),
+        );
+        current_thread::spawn(outgoing_stream);
     }
 
     pub fn run(&mut self) -> Result<(), Error> {
@@ -263,8 +283,10 @@ impl Peer {
                 endpoint
                     .connect_with(&client_config, &bootstrap_addr, host_str)?
                     .map_err(|e| error!("failed to connect: {}", e))
-                    .and_then(Self::handle_outgoing)
-                    .inspect(|()| info!("Disconnected from bootstrap")),
+                    .and_then(|conn| {
+                        Self::handle_outgoing(conn);
+                        Ok(())
+                    }),
             );
             self.runtime.spawn(bootstrap_connection_future);
         }
