@@ -8,6 +8,8 @@ authors = ["Simon Heath <icefoxen@gmail.com>"]
 quinn = {git = "https://github.com/djc/quinn.git", features = ["dangerous_configuration"]}
 tokio = "0.1"
 tokio-io = "0.1"
+# :|
+tokio-current-thread = "0.1"
 failure = "0.1"
 futures = "0.1"
 structopt = "0.2"
@@ -30,3 +32,4 @@ slog-term = "2"
 slog-async = "2"
 slog-scope = "4"
 slog-stdlog = "3"
+

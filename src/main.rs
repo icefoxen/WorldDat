@@ -1,5 +1,6 @@
 extern crate quinn;
 extern crate tokio;
+extern crate tokio_current_thread;
 extern crate tokio_io;
 #[macro_use]
 extern crate failure;

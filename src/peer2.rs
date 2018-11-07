@@ -101,6 +101,21 @@ impl Peer {
         //         }),
         // );
 
+        let handle_stream = move |bi_stream| {
+            quinn::read_to_end(bi_stream, 64 * 1024)
+                .map_err(|e| format_err!("failed reading request: {}", e))
+                .inspect(|(_stream, res)| {
+                    let escaped_message = escaped(res);
+                    info!("Got message: \"{}\"", escaped_message);
+                }).map_err(|e| warn!("Incoming stream failed: {:?}", e))
+                .and_then(|(stream, _res)| {
+                    tokio::io::shutdown(stream)
+                        .inspect(|_stream| info!("Stream shut down"))
+                        .map(|_stream| ())
+                        .map_err(|e| warn!("Error shutting down stream: {:?}", e))
+                })
+        };
+
         // For each incoming stream, try to receive a message on it.
         let incoming_streams: Box<dyn Future<Item = (), Error = ()>> = Box::new(
             incoming
@@ -109,18 +124,22 @@ impl Peer {
                     info!("Peer created incoming stream");
                     // Don't bother with uni-directional streams yet.
                     match stream {
-                        quinn::NewStream::Bi(bi_stream) => quinn::read_to_end(bi_stream, 64 * 1024)
-                            .map_err(|e| format_err!("failed reading request: {}", e))
-                            .inspect(|(_stream, res)| {
-                                let escaped_message = escaped(res);
-                                info!("Got message: \"{}\"", escaped_message);
-                            }).map_err(|e| warn!("Incoming stream failed: {:?}", e))
-                            .and_then(|(stream, _res)| {
-                                tokio::io::shutdown(stream)
-                                    .inspect(|_stream| info!("Stream shut down"))
-                                    .map(|_stream| ())
-                                    .map_err(|e| warn!("Error shutting down stream: {:?}", e))
-                            }),
+                        quinn::NewStream::Bi(bi_stream) => {
+                            tokio_current_thread::spawn(handle_stream(bi_stream));
+                            Ok(())
+                        }
+                        // quinn::read_to_end(bi_stream, 64 * 1024)
+                        //     .map_err(|e| format_err!("failed reading request: {}", e))
+                        //     .inspect(|(_stream, res)| {
+                        //         let escaped_message = escaped(res);
+                        //         info!("Got message: \"{}\"", escaped_message);
+                        //     }).map_err(|e| warn!("Incoming stream failed: {:?}", e))
+                        //     .and_then(|(stream, _res)| {
+                        //         tokio::io::shutdown(stream)
+                        //             .inspect(|_stream| info!("Stream shut down"))
+                        //             .map(|_stream| ())
+                        //             .map_err(|e| warn!("Error shutting down stream: {:?}", e))
+                        //     }),
                         quinn::NewStream::Uni(_) => unimplemented!(),
                     }
                 }),
