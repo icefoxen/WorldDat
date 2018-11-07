@@ -170,31 +170,19 @@ impl Peer {
         self.runtime.spawn(incoming.for_each(Self::handle_incoming));
 
         // Client stuff.
-        if let Some(ref bootstrap_url) = self.options.bootstrap_peer {
-            use std::net::ToSocketAddrs;
+        if let Some(ref bootstrap_addr) = self.options.bootstrap_peer {
             let mut client_builder = quinn::ClientConfigBuilder::new();
             // We basically by definition don't know the peer's cert, so
             // this is ok.
             client_builder.accept_insecure_certs();
             let client_config = client_builder.build();
 
-            // TODO: Make this something nicer than a URL
-            let remote = bootstrap_url
-                .with_default_port(|_| Ok(4433))?
-                .to_socket_addrs()?
-                .next()
-                .ok_or(format_err!("couldn't resolve to an address"))?;
-
-            // TODO: What the heck is this for anyway :|
-            // Oooooh it's for TLS cert name verification.
-            // We can probably leave it as is for now then.
-            // let host_str = bootstrap_url
-            //     .host_str()
-            //     .ok_or(format_err!("URL missing host"))?;
-
+            // This is the other peer's hostname for SSL verification.
+            // We accept insecure certs, and don't follow CA's, so it's placeholder.
+            let host_str = "some_peer";
             let bootstrap_connection_future: Box<dyn Future<Item = (), Error = ()>> = Box::new(
                 endpoint
-                    .connect_with(&client_config, &remote, "host_str")?
+                    .connect_with(&client_config, &bootstrap_addr, host_str)?
                     .map_err(|e| error!("failed to connect: {}", e))
                     .and_then(Self::handle_outgoing)
                     .inspect(|()| info!("Disconnected from bootstrap")),

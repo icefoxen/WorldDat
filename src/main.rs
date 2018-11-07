@@ -76,32 +76,32 @@ fn setup_logging() {
 
 #[derive(StructOpt, Debug, Clone)]
 pub struct PeerOpt {
-    /// Initial node to connect to
+    /// Initial node to connect to, if any.
     #[structopt(short = "b", long = "bootstrap")]
-    bootstrap_peer: Option<url::Url>,
-    #[structopt(short = "t", long = "thing")]
-    thing: Option<SocketAddr>,
+    bootstrap_peer: Option<SocketAddr>,
 
     /// Address to listen on for incoming connections.
     /// Currently we always listen but it would be nice to have
     /// a fetch-only peer sometime.
     #[structopt(short = "l", long = "listen", default_value = "[::]:4433")]
     listen: SocketAddr,
+
+    /// Certificate authority key.
     #[structopt(parse(from_os_str), long = "ca")]
     ca: Option<PathBuf>,
 
     // TODO: External files here is not necessarily nicest for unit testing.
     // ALSO TODO: Can we make them optional?  Not yet.
     // See https://github.com/djc/quinn/issues/35
-    /// TLS private key in PEM format
+    /// TLS private key in PEM format.
     #[structopt(parse(from_os_str), short = "k", long = "key")]
     key: PathBuf,
-    /// TLS certificate in PEM format
+    /// TLS certificate in PEM format.
     #[structopt(parse(from_os_str), short = "c", long = "cert")]
     cert: PathBuf,
 
     /// Whether or not to output low-level QUIC protocol logging,
-    /// useful for debugging
+    /// useful for debugging.
     #[structopt(long = "logproto")]
     logproto: bool,
 }
