@@ -79,6 +79,8 @@ pub struct PeerOpt {
     /// Initial node to connect to
     #[structopt(short = "b", long = "bootstrap")]
     bootstrap_peer: Option<url::Url>,
+    #[structopt(short = "t", long = "thing")]
+    thing: Option<SocketAddr>,
 
     /// Address to listen on for incoming connections.
     /// Currently we always listen but it would be nice to have

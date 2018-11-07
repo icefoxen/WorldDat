@@ -70,6 +70,27 @@ impl Peer {
         builder.logger(root);
     }
 
+    /// Needs to return a `Result` so it can be used as a future.
+    fn handle_incoming(conn: quinn::NewConnection) -> Result<(), ()> {
+        info!(
+            "Incoming connection from: {:?}",
+            conn.connection.remote_address()
+        );
+        Ok(())
+    }
+
+    fn handle_outgoing(conn: quinn::NewClientConnection) -> Box<dyn Future<Item = (), Error = ()>> {
+        info!(
+            "Connected to bootstrap peer: {:?}",
+            conn.connection.remote_address()
+        );
+        Box::new(
+            conn.connection
+                .close(0, b"done")
+                .map_err(|_| unreachable!()),
+        )
+    }
+
     pub fn run(&mut self) -> Result<(), Error> {
         // Initial setup and config.
         let mut builder = quinn::EndpointBuilder::from_config(quinn::Config {
@@ -88,13 +109,7 @@ impl Peer {
         // Start listening for connections.
         info!("Binding to {:?}", self.options.listen);
         let (endpoint, driver, incoming) = builder.bind(self.options.listen)?;
-        self.runtime.spawn(incoming.for_each(move |conn| {
-            info!(
-                "Incoming connection from: {:?}",
-                conn.connection.remote_address()
-            );
-            Ok(())
-        }));
+        self.runtime.spawn(incoming.for_each(Self::handle_incoming));
 
         // Client stuff.
         if let Some(ref bootstrap_url) = self.options.bootstrap_peer {
@@ -112,18 +127,32 @@ impl Peer {
                 .next()
                 .ok_or(format_err!("couldn't resolve to an address"))?;
 
+            // TODO: What the heck is this for anyway :|
+            // Oooooh it's for TLS cert name verification.
+            // We can probably leave it as is for now then.
             // let host_str = bootstrap_url
             //     .host_str()
             //     .ok_or(format_err!("URL missing host"))?;
+            // let outgoing_future: Box<dyn Future<Item = (), Error = ()>> = Box::new(
+            //     endpoint
+            //         .connect_with(&client_config, &remote, "host_str")?
+            //         .map_err(|e| format_err!("failed to connect: {}", e))
+            //         .and_then(Self::handle_outgoing),
+            // );
             self.runtime.spawn(
                 endpoint
                     .connect_with(&client_config, &remote, "host_str")?
                     .map_err(|e| format_err!("failed to connect: {}", e))
+                    // .and_then(Self::handle_outgoing)
+                    // .map_err(|e| format_err!("FDASFSDA: {}", e))
                     .and_then(move |conn| {
                         info!("Connected to {:?}", conn.connection.remote_address());
-                        conn.connection
-                            .close(0, b"done")
-                            .map_err(|_| unreachable!())
+                        Self::handle_outgoing(conn);
+                        // conn.connection
+                        //     .close(0, b"done")
+                        //     .map_err(|_| unreachable!())
+                        // Ok(conn)
+                        Ok(())
                     }).map_err(|e| warn!("Error with connection? {:?}", e))
                     .and_then(move |_| {
                         info!("Connection done?");
