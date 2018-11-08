@@ -9,13 +9,8 @@ use rustls;
 use tokio;
 use tokio::runtime::current_thread::{self, Runtime};
 
+use crate::types::*;
 use crate::PeerOpt;
-
-/// The actual serializable messages that can be sent back and forth.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-enum Message {
-    Ping {},
-}
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -40,6 +35,7 @@ fn escaped(bytes: &[u8]) -> String {
     }
     escaped
 }
+
 impl Peer {
     pub fn new(options: PeerOpt) -> Result<Self, Error> {
         // We must create the `Runtime` even though we're just handling
