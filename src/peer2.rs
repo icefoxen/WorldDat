@@ -1,4 +1,6 @@
+use std::net::SocketAddr;
 use std::path::Path;
+use std::sync::mpsc;
 
 use failure::{err_msg, Error, ResultExt};
 use futures::{Future, Stream};
@@ -9,9 +11,22 @@ use tokio::runtime::current_thread::{self, Runtime};
 
 use crate::PeerOpt;
 
+/// The actual serializable messages that can be sent back and forth.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+enum Message {
+    Ping {},
+}
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
 pub struct Peer {
     options: PeerOpt,
     runtime: Runtime,
+    incoming_messages: mpsc::Sender<(SocketAddr, Message)>,
+    outgoing_messages: mpsc::Receiver<(SocketAddr, Message)>,
+    connections: Rc<RefCell<HashMap<SocketAddr, quinn::Connection>>>,
 }
 
 /// Creates an escaped ASCII string from the given bytes.
@@ -31,7 +46,16 @@ impl Peer {
         // `current_thread::spawn()` stuff, 'cause otherwise... I don't even
         // know.  Bah.
         let runtime = Runtime::new()?;
-        Ok(Peer { options, runtime })
+        let connections = Rc::new(RefCell::new(HashMap::new()));
+        let (_, outgoing) = mpsc::channel();
+        let (incoming, _) = mpsc::channel();
+        Ok(Peer {
+            options,
+            runtime,
+            incoming_messages: incoming,
+            outgoing_messages: outgoing,
+            connections,
+        })
     }
 
     /// Loads RSA private keys and cert chains from the files given in the options,
@@ -84,94 +108,12 @@ impl Peer {
         builder.logger(root);
     }
 
-    /// Implements the state machine of actually talking to a peer...
-    fn talk_to_peer(
-        conn: quinn::Connection,
-        incoming: quinn::IncomingStreams,
-    ) -> impl Future<Item = (), Error = ()> {
-        let outgoing_stream: Box<dyn Future<Item = (), Error = ()>> = Box::new(
-            conn.open_bi()
-                .map_err(|e| format_err!("failed to open stream: {:?}", e))
-                .then(move |stream| {
-                    info!("Sending message to peer");
-                    let s = stream.expect("Could not unwrap stream?");
-                    let msg = b"Foo!";
-                    tokio::io::write_all(s, msg)
-                        .and_then(|(stream, _vec)| tokio::io::shutdown(stream))
-                        .map_err(|e| warn!("Failed to send request: {}", e))
-                        .map(move |_| debug!("Message send complete: {:X?}", msg))
-                }),
-        );
-
-        let handle_stream = move |bi_stream| {
-            quinn::read_to_end(bi_stream, 64 * 1024)
-                .map_err(|e| format_err!("failed reading request: {}", e))
-                .inspect(|(_stream, res)| {
-                    let escaped_message = escaped(res);
-                    info!("Got message: \"{}\"", escaped_message);
-                }).map_err(|e| warn!("Incoming stream failed: {:?}", e))
-                .and_then(|(stream, _res)| {
-                    tokio::io::shutdown(stream)
-                        .inspect(|_stream| info!("Stream shut down"))
-                        .map(|_stream| ())
-                        .map_err(|e| warn!("Error shutting down stream: {:?}", e))
-                })
-        };
-
-        // For each incoming stream, try to receive a message on it.
-        let incoming_streams: Box<dyn Future<Item = (), Error = ()>> = Box::new(
-            incoming
-                .map_err(|e| warn!("Incoming stream failed: {:?}", e))
-                .for_each(move |stream: quinn::NewStream| {
-                    info!("Peer created incoming stream");
-                    // Don't bother with uni-directional streams yet.
-                    match stream {
-                        quinn::NewStream::Bi(bi_stream) => {
-                            current_thread::spawn(handle_stream(bi_stream));
-                            Ok(())
-                        }
-                        // quinn::read_to_end(bi_stream, 64 * 1024)
-                        //     .map_err(|e| format_err!("failed reading request: {}", e))
-                        //     .inspect(|(_stream, res)| {
-                        //         let escaped_message = escaped(res);
-                        //         info!("Got message: \"{}\"", escaped_message);
-                        //     }).map_err(|e| warn!("Incoming stream failed: {:?}", e))
-                        //     .and_then(|(stream, _res)| {
-                        //         tokio::io::shutdown(stream)
-                        //             .inspect(|_stream| info!("Stream shut down"))
-                        //             .map(|_stream| ())
-                        //             .map_err(|e| warn!("Error shutting down stream: {:?}", e))
-                        //     }),
-                        quinn::NewStream::Uni(_) => unimplemented!(),
-                    }
-                }),
-        );
-
-        // let merged_stream_handlers = outgoing_stream.join(incoming_streams).map(|((), ())| ());
-        // let merged_stream_handlers = incoming_streams;
-        let merged_stream_handlers = outgoing_stream;
-
-        merged_stream_handlers.and_then(move |()| {
-            // info!("Closing connection to {:?}", conn.remote_address());
-            // conn.close(0, b"done")
-            Ok(())
-        })
-    }
-
-    /// Needs to return a `Result` so it can be used as a future.
-    fn handle_incoming(conn: quinn::NewConnection) -> impl Future<Item = (), Error = ()> {
-        info!(
-            "Incoming connection from: {:?}",
-            conn.connection.remote_address()
-        );
-        let quinn::NewConnection {
-            connection,
-            incoming,
-        } = conn;
-        Self::talk_to_peer(connection, incoming)
-    }
-
-    fn handle_request_quinn(stream: quinn::NewStream) {
+    fn read_message(
+        remote_address: SocketAddr,
+        stream: quinn::NewStream,
+        channel: mpsc::Sender<(SocketAddr, Message)>,
+    ) {
+        // TODO: Honestly probably should just do uni streams all the way
         let stream = match stream {
             quinn::NewStream::Bi(stream) => stream,
             quinn::NewStream::Uni(_) => unreachable!(), // config.max_remote_uni_streams is defaulted to 0
@@ -183,6 +125,11 @@ impl Peer {
                 .and_then(move |(stream, req)| {
                     let msg = escaped(&req);
                     info!("got request: \"{}\"", msg);
+
+                    // TODO: Handle real data
+                    channel
+                        .send((remote_address, Message::Ping {}))
+                        .expect("FDSAFDSAFA");
                     // Create a response
                     let resp = b"Bar!!";
                     // Write the response
@@ -198,39 +145,44 @@ impl Peer {
         )
     }
 
-    fn handle_connection_incoming_quinn(conn: quinn::NewConnection) {
-        let quinn::NewConnection {
-            incoming,
-            connection,
-        } = conn;
-        info!("Got connection: {:?}", connection.remote_address());
-        // Each stream initiated by the client constitutes a new request.
+    fn handle_connection(
+        incoming: quinn::IncomingStreams,
+        connection: quinn::Connection,
+        channel: mpsc::Sender<(SocketAddr, Message)>,
+        connection_map: Rc<RefCell<HashMap<SocketAddr, quinn::Connection>>>,
+    ) {
+        let c2 = connection.clone();
+
+        let remote_address = connection.remote_address();
+        connection_map
+            .borrow_mut()
+            .insert(connection.remote_address(), connection);
+
         current_thread::spawn(
             incoming
                 .map_err(move |e| info!("connection terminated: {:?}", e))
                 .for_each(move |stream| {
-                    Self::handle_request_quinn(stream);
+                    Self::read_message(remote_address, stream, channel.clone());
                     Ok(())
                 }),
         );
-    }
 
-    fn handle_outgoing(conn: quinn::NewClientConnection) {
-        info!(
-            "Connected to bootstrap peer: {:?}",
-            conn.connection.remote_address()
-        );
-
-        let quinn::NewClientConnection {
-            connection,
-            incoming,
-            session_tickets: _session_tickets,
-        } = conn;
-        // Self::talk_to_peer(connection, incoming)
-
+        // TODO NEXT: This needs to do something useful, and probably not close the
+        // connection (stream?) when finished; we're a bit loosey goosey with all that
+        // BS, when really all streams can just be uni-directional.
+        // Apparently cloning a connection is okay though, which is... interesting.
+        // I think the idea is going to have to be that for each new connection we
+        // create a channel and pass the Sender end of it to the worker thread, and
+        // the worker uses that channel to send a message to that particular connection.
+        //
+        // A bit of a PITA, but it should work?  We will get a send error if the
+        // receiving side of the channel gets dropped, ie by the connection
+        // closing.
+        // We might have to use futures::sync::mpsc::unbounded() instead of
+        // std::sync::mpsc... idk why the hell they just don't impl Stream for
+        // std::sync::mpsc.
         let outgoing_stream: Box<dyn Future<Item = (), Error = ()>> = Box::new(
-            connection
-                .open_bi()
+            c2.open_bi()
                 .map_err(|e| format_err!("failed to open stream: {:?}", e))
                 .then(move |stream| {
                     info!("Sending message to peer");
@@ -243,6 +195,39 @@ impl Peer {
                 }).inspect(|_| info!("Disconnecting from bootstrap")),
         );
         current_thread::spawn(outgoing_stream);
+    }
+
+    fn handle_incoming_connection(
+        conn: quinn::NewConnection,
+        channel: mpsc::Sender<(SocketAddr, Message)>,
+        connection_map: Rc<RefCell<HashMap<SocketAddr, quinn::Connection>>>,
+    ) {
+        let quinn::NewConnection {
+            incoming,
+            connection,
+        } = conn;
+        info!("Got incoming connection: {:?}", connection.remote_address());
+
+        Self::handle_connection(incoming, connection, channel, connection_map);
+    }
+
+    fn handle_outgoing_connection(
+        conn: quinn::NewClientConnection,
+        channel: mpsc::Sender<(SocketAddr, Message)>,
+        connection_map: Rc<RefCell<HashMap<SocketAddr, quinn::Connection>>>,
+    ) {
+        info!(
+            "Outgoing connection established to peer: {:?}",
+            conn.connection.remote_address()
+        );
+
+        let quinn::NewClientConnection {
+            connection,
+            incoming,
+            session_tickets: _session_tickets,
+        } = conn;
+
+        Self::handle_connection(incoming, connection, channel, connection_map)
     }
 
     pub fn run(&mut self) -> Result<(), Error> {
@@ -263,8 +248,14 @@ impl Peer {
         // Start listening for connections.
         info!("Binding to {:?}", self.options.listen);
         let (endpoint, driver, incoming) = builder.bind(self.options.listen)?;
+        let incoming_message_channel = self.incoming_messages.clone();
+        let connection_map = self.connections.clone();
         self.runtime.spawn(incoming.for_each(move |conn| {
-            Self::handle_connection_incoming_quinn(conn);
+            Self::handle_incoming_connection(
+                conn,
+                incoming_message_channel.clone(),
+                connection_map.clone(),
+            );
             Ok(())
         }));
 
@@ -277,14 +268,22 @@ impl Peer {
             let client_config = client_builder.build();
 
             // This is the other peer's hostname for SSL verification.
-            // We accept insecure certs, and don't follow CA's, so it's placeholder.
+            // We accept insecure certs, and don't follow CA's, so it's a
+            // placeholder.
             let host_str = "some_peer";
+
+            let incoming_message_channel = self.incoming_messages.clone();
+            let connection_map = self.connections.clone();
             let bootstrap_connection_future: Box<dyn Future<Item = (), Error = ()>> = Box::new(
                 endpoint
                     .connect_with(&client_config, &bootstrap_addr, host_str)?
                     .map_err(|e| error!("failed to connect: {}", e))
-                    .and_then(|conn| {
-                        Self::handle_outgoing(conn);
+                    .and_then(move |conn| {
+                        Self::handle_outgoing_connection(
+                            conn,
+                            incoming_message_channel.clone(),
+                            connection_map.clone(),
+                        );
                         Ok(())
                     }),
             );

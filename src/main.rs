@@ -7,7 +7,7 @@ extern crate futures;
 extern crate structopt;
 extern crate url;
 
-#[macro_use(slog_o, slog_trace)]
+#[macro_use(slog_o)]
 extern crate slog;
 extern crate slog_async;
 extern crate slog_scope;
