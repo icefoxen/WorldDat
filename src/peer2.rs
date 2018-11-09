@@ -19,7 +19,6 @@ use crate::PeerOpt;
 pub struct Peer {
     options: PeerOpt,
     runtime: Runtime,
-    incoming_messages: mpsc::Sender<(SocketAddr, Message)>,
     outgoing_messages: mpsc::Receiver<(SocketAddr, Message)>,
     connections: Rc<RefCell<HashMap<SocketAddr, quinn::Connection>>>,
     peer_state_handle: data_mongler::PeerStateHandle,
@@ -46,13 +45,11 @@ impl Peer {
         let runtime = Runtime::new()?;
         let connections = Rc::new(RefCell::new(HashMap::new()));
         let (outgoing_sender, outgoing_receiver) = mpsc::channel();
-        let (incoming_sender, incoming_receiver) = mpsc::channel();
 
-        let peer_state_handle = data_mongler::PeerState::start(incoming_receiver);
+        let peer_state_handle = data_mongler::PeerState::start();
         Ok(Peer {
             options,
             runtime,
-            incoming_messages: incoming_sender,
             outgoing_messages: outgoing_receiver,
             connections,
             peer_state_handle,
@@ -112,7 +109,7 @@ impl Peer {
     fn read_message(
         remote_address: SocketAddr,
         stream: quinn::NewStream,
-        channel: mpsc::Sender<(SocketAddr, Message)>,
+        channel: data_mongler::PeerMessageHandle,
     ) {
         // TODO: Honestly probably should just do uni streams all the way
         let stream = match stream {
@@ -129,8 +126,8 @@ impl Peer {
 
                     // TODO: Handle real data
                     channel
-                        .send((remote_address, Message::Ping {}))
-                        .expect("FDSAFDSAFA");
+                        .message(remote_address, Message::Ping {})
+                        .expect("TODO FDSAFDSAFA");
                     // Create a response
                     let resp = b"Bar!!";
                     // Write the response
@@ -149,7 +146,7 @@ impl Peer {
     fn handle_connection(
         incoming: quinn::IncomingStreams,
         connection: quinn::Connection,
-        channel: mpsc::Sender<(SocketAddr, Message)>,
+        channel: data_mongler::PeerMessageHandle,
         connection_map: Rc<RefCell<HashMap<SocketAddr, quinn::Connection>>>,
     ) {
         let c2 = connection.clone();
@@ -200,7 +197,7 @@ impl Peer {
 
     fn handle_incoming_connection(
         conn: quinn::NewConnection,
-        channel: mpsc::Sender<(SocketAddr, Message)>,
+        channel: data_mongler::PeerMessageHandle,
         connection_map: Rc<RefCell<HashMap<SocketAddr, quinn::Connection>>>,
     ) {
         let quinn::NewConnection {
@@ -214,7 +211,7 @@ impl Peer {
 
     fn handle_outgoing_connection(
         conn: quinn::NewClientConnection,
-        channel: mpsc::Sender<(SocketAddr, Message)>,
+        channel: data_mongler::PeerMessageHandle,
         connection_map: Rc<RefCell<HashMap<SocketAddr, quinn::Connection>>>,
     ) {
         info!(
@@ -250,14 +247,10 @@ impl Peer {
         // Start listening for connections.
         info!("Binding to {:?}", self.options.listen);
         let (endpoint, driver, incoming) = builder.bind(self.options.listen)?;
-        let incoming_message_channel = self.incoming_messages.clone();
         let connection_map = self.connections.clone();
+        let message_handle = self.peer_state_handle.controller();
         self.runtime.spawn(incoming.for_each(move |conn| {
-            Self::handle_incoming_connection(
-                conn,
-                incoming_message_channel.clone(),
-                connection_map.clone(),
-            );
+            Self::handle_incoming_connection(conn, message_handle.clone(), connection_map.clone());
             Ok(())
         }));
 
@@ -274,7 +267,7 @@ impl Peer {
             // placeholder.
             let host_str = "some_peer";
 
-            let incoming_message_channel = self.incoming_messages.clone();
+            let message_handle = self.peer_state_handle.controller();
             let connection_map = self.connections.clone();
             let bootstrap_connection_future: Box<dyn Future<Item = (), Error = ()>> = Box::new(
                 endpoint
@@ -283,7 +276,7 @@ impl Peer {
                     .and_then(move |conn| {
                         Self::handle_outgoing_connection(
                             conn,
-                            incoming_message_channel.clone(),
+                            message_handle.clone(),
                             connection_map.clone(),
                         );
                         Ok(())

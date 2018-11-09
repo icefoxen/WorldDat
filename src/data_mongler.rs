@@ -6,16 +6,30 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
 
 use failure::Error;
 
 use crate::types::*;
 
+/// A message that gets sent through a channel to
+/// tell the PeerState thread to do something.
+///
+/// Obviates the need to have multiple channels.
+enum ControlMessage {
+    /// Stop the worker thread.
+    Quit,
+    /// Wake up and check to see if there's anything that needs doing.
+    /// Crude but it'll work.
+    Wake,
+    /// A message was received from a peer!
+    Incoming(SocketAddr, Message),
+}
+
 /// A struct that lets another thread manipulate a `PeerState` which
 /// is running in its own thread...
+#[derive(Debug)]
 pub struct PeerStateHandle {
-    quit_channel: mpsc::Sender<()>,
+    control_sender: mpsc::Sender<ControlMessage>,
     thread_handle: thread::JoinHandle<()>,
 }
 
@@ -26,36 +40,55 @@ impl PeerStateHandle {
     /// Returns Err if the thread didn't exist or if
     /// there was some problem joining to it.
     pub fn quit(self) -> Result<(), Error> {
-        self.quit_channel.send(())?;
+        self.control_sender.send(ControlMessage::Quit)?;
         self.thread_handle
             .join()
             .map_err(|e| format_err!("Error joining worker thread: {:?}", e))?;
         Ok(())
     }
+
+    /// Returns a copy of the control channel sender.
+    /// Crude but we can't clone the whole handle, irritatingly.
+    pub fn controller(&self) -> PeerMessageHandle {
+        PeerMessageHandle {
+            control_sender: self.control_sender.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PeerMessageHandle {
+    control_sender: mpsc::Sender<ControlMessage>,
+}
+
+impl PeerMessageHandle {
+    /// Tell the worker thread a message has been recieved from the given source
+    pub fn message(&self, source: SocketAddr, message: Message) -> Result<(), Error> {
+        self.control_sender
+            .send(ControlMessage::Incoming(source, message))
+            .map_err(|e| format_err!("FIXME {:?}", e))
+    }
 }
 
 pub struct PeerState {
-    /// The stream of all messages we receive from all peers.
-    incoming_messages: mpsc::Receiver<(SocketAddr, Message)>,
     /// One channel per active connection.
     outgoing_messages_map: HashMap<SocketAddr, mpsc::Sender<Message>>,
     /// Receiving a message on this handle tells us to stop our main loop.
-    quit_channel: mpsc::Receiver<()>,
+    control_receiver: mpsc::Receiver<ControlMessage>,
 }
 
 impl PeerState {
     /// Creates a new `PeerState` and runs it in its own thread,
     /// returns a handle to control it.
-    pub fn start(message_channel: mpsc::Receiver<(SocketAddr, Message)>) -> PeerStateHandle {
-        let (quit_sender, quit_receiver) = mpsc::channel();
+    pub fn start() -> PeerStateHandle {
+        let (control_sender, control_receiver) = mpsc::channel();
         let state = Self {
-            incoming_messages: message_channel,
             outgoing_messages_map: HashMap::new(),
-            quit_channel: quit_receiver,
+            control_receiver,
         };
         let thread_handle = thread::spawn(|| state.run());
         let handle = PeerStateHandle {
-            quit_channel: quit_sender,
+            control_sender,
             thread_handle,
         };
         handle
@@ -78,14 +111,21 @@ impl PeerState {
     /// die.
     pub fn run(self) {
         loop {
-            // There's no select() for mpsc channels.... so we kinda
-            // just poll like a noob.  I'm fine with it for now.
-            // TODO:
-            // We could just have a single channel with an enum of message types,
-            // that subsumes both this and the quit channel.
-            match self.incoming_messages.recv() {
-                Ok(_msg) => {
-                    // Do stuff with message
+            // TODO: Send occasional "wake up and do stuff if needed" messages.
+            // `recv_timeout()` sucks more than advertised, it seems.
+            match self.control_receiver.recv() {
+                Ok(ControlMessage::Quit) => {
+                    // Stop the loop.
+                    break;
+                }
+                Ok(ControlMessage::Wake) => {
+                    // Just continue and see if there's anything else
+                    // we need to do...
+                    ()
+                }
+                Ok(_) => {
+                    // TODO: Whatever else.
+                    info!("Got a message");
                     ()
                 }
                 Err(_) => {
@@ -93,12 +133,6 @@ impl PeerState {
                     // We can never receive more messages, soooo, we're done!
                     break;
                 }
-            }
-
-            match self.quit_channel.try_recv() {
-                Ok(()) => break,
-                Err(mpsc::TryRecvError::Disconnected) => break,
-                Err(mpsc::TryRecvError::Empty) => (),
             }
         }
     }
