@@ -21,7 +21,7 @@ pub struct Peer {
     runtime: Runtime,
     outgoing_messages: mpsc::Receiver<(SocketAddr, Message)>,
     connections: Rc<RefCell<HashMap<SocketAddr, quinn::Connection>>>,
-    peer_state_handle: data_mongler::PeerStateHandle,
+    peer_state_handle: data_mongler::WorkerHandle,
 }
 
 /// Creates an escaped ASCII string from the given bytes.
@@ -46,7 +46,7 @@ impl Peer {
         let connections = Rc::new(RefCell::new(HashMap::new()));
         let (outgoing_sender, outgoing_receiver) = mpsc::channel();
 
-        let peer_state_handle = data_mongler::PeerState::start();
+        let peer_state_handle = data_mongler::WorkerState::start();
         Ok(Peer {
             options,
             runtime,
@@ -109,7 +109,7 @@ impl Peer {
     fn read_message(
         remote_address: SocketAddr,
         stream: quinn::NewStream,
-        channel: data_mongler::PeerMessageHandle,
+        channel: data_mongler::WorkerMessageHandle,
     ) {
         // TODO: Honestly probably should just do uni streams all the way
         let stream = match stream {
@@ -146,7 +146,7 @@ impl Peer {
     fn handle_connection(
         incoming: quinn::IncomingStreams,
         connection: quinn::Connection,
-        channel: data_mongler::PeerMessageHandle,
+        channel: data_mongler::WorkerMessageHandle,
         connection_map: Rc<RefCell<HashMap<SocketAddr, quinn::Connection>>>,
     ) {
         let c2 = connection.clone();
@@ -197,7 +197,7 @@ impl Peer {
 
     fn handle_incoming_connection(
         conn: quinn::NewConnection,
-        channel: data_mongler::PeerMessageHandle,
+        channel: data_mongler::WorkerMessageHandle,
         connection_map: Rc<RefCell<HashMap<SocketAddr, quinn::Connection>>>,
     ) {
         let quinn::NewConnection {
@@ -211,7 +211,7 @@ impl Peer {
 
     fn handle_outgoing_connection(
         conn: quinn::NewClientConnection,
-        channel: data_mongler::PeerMessageHandle,
+        channel: data_mongler::WorkerMessageHandle,
         connection_map: Rc<RefCell<HashMap<SocketAddr, quinn::Connection>>>,
     ) {
         info!(
