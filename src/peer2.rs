@@ -1,5 +1,8 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::Path;
+use std::rc::Rc;
 use std::sync::mpsc;
 
 use failure::{err_msg, Error, ResultExt};
@@ -9,12 +12,9 @@ use rustls;
 use tokio;
 use tokio::runtime::current_thread::{self, Runtime};
 
+use crate::data_mongler;
 use crate::types::*;
 use crate::PeerOpt;
-
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::Rc;
 
 pub struct Peer {
     options: PeerOpt,
@@ -22,6 +22,7 @@ pub struct Peer {
     incoming_messages: mpsc::Sender<(SocketAddr, Message)>,
     outgoing_messages: mpsc::Receiver<(SocketAddr, Message)>,
     connections: Rc<RefCell<HashMap<SocketAddr, quinn::Connection>>>,
+    peer_state_handle: data_mongler::PeerStateHandle,
 }
 
 /// Creates an escaped ASCII string from the given bytes.
@@ -37,20 +38,24 @@ fn escaped(bytes: &[u8]) -> String {
 }
 
 impl Peer {
+    /// Creates the thing, and starts the worker thread.
     pub fn new(options: PeerOpt) -> Result<Self, Error> {
         // We must create the `Runtime` even though we're just handling
         // `current_thread::spawn()` stuff, 'cause otherwise... I don't even
         // know.  Bah.
         let runtime = Runtime::new()?;
         let connections = Rc::new(RefCell::new(HashMap::new()));
-        let (_, outgoing) = mpsc::channel();
-        let (incoming, _) = mpsc::channel();
+        let (outgoing_sender, outgoing_receiver) = mpsc::channel();
+        let (incoming_sender, incoming_receiver) = mpsc::channel();
+
+        let peer_state_handle = data_mongler::PeerState::start(incoming_receiver);
         Ok(Peer {
             options,
             runtime,
-            incoming_messages: incoming,
-            outgoing_messages: outgoing,
+            incoming_messages: incoming_sender,
+            outgoing_messages: outgoing_receiver,
             connections,
+            peer_state_handle,
         })
     }
 
@@ -226,7 +231,8 @@ impl Peer {
         Self::handle_connection(incoming, connection, channel, connection_map)
     }
 
-    pub fn run(&mut self) -> Result<(), Error> {
+    /// Note this consumes self.
+    pub fn run(mut self) -> Result<(), Error> {
         // Initial setup and config.
         let mut builder = quinn::EndpointBuilder::from_config(quinn::Config {
             max_remote_bi_streams: 64,
@@ -287,6 +293,8 @@ impl Peer {
         }
 
         self.runtime.block_on(driver)?;
+
+        self.peer_state_handle.quit()?;
 
         Ok(())
     }
