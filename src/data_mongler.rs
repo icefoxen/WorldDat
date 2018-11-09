@@ -77,23 +77,21 @@ impl PeerState {
     /// Returns a `PeerStateHandle` which can be used to tell it to
     /// die.
     pub fn run(self) {
-        let timeout = Duration::from_secs(1);
         loop {
             // There's no select() for mpsc channels.... so we kinda
             // just poll like a noob.  I'm fine with it for now.
-            match self.incoming_messages.recv_timeout(timeout) {
+            // TODO:
+            // We could just have a single channel with an enum of message types,
+            // that subsumes both this and the quit channel.
+            match self.incoming_messages.recv() {
                 Ok(_msg) => {
                     // Do stuff with message
                     ()
                 }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err(_) => {
                     // Sender is gone.
                     // We can never receive more messages, soooo, we're done!
                     break;
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    // Shrug, no messages, stop and do other things before looping.
-                    ()
                 }
             }
 
