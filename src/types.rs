@@ -4,4 +4,5 @@
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Message {
     Ping {},
+    Raw { data: Box<[u8]> },
 }

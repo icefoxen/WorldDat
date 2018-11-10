@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::mpsc;
 
 use failure::{err_msg, Error, ResultExt};
 use futures::{Future, Stream};
@@ -19,7 +18,6 @@ use crate::PeerOpt;
 pub struct Peer {
     options: PeerOpt,
     runtime: Runtime,
-    outgoing_messages: mpsc::Receiver<(SocketAddr, Message)>,
     connections: Rc<RefCell<HashMap<SocketAddr, quinn::Connection>>>,
     peer_state_handle: data_mongler::WorkerHandle,
 }
@@ -44,13 +42,11 @@ impl Peer {
         // know.  Bah.
         let runtime = Runtime::new()?;
         let connections = Rc::new(RefCell::new(HashMap::new()));
-        let (outgoing_sender, outgoing_receiver) = mpsc::channel();
 
         let peer_state_handle = data_mongler::WorkerState::start();
         Ok(Peer {
             options,
             runtime,
-            outgoing_messages: outgoing_receiver,
             connections,
             peer_state_handle,
         })
@@ -124,18 +120,23 @@ impl Peer {
                     let msg = escaped(&req);
                     info!("got request: \"{}\"", msg);
 
-                    // TODO: Handle real data
+                    // TODO: Do we bother with serialization stuff here or
+                    // not?  Maybe not.
                     channel
-                        .message(remote_address, Message::Ping {})
+                        .message(remote_address, Message::Raw { data: req })
                         .expect("TODO FDSAFDSAFA");
-                    // Create a response
-                    let resp = b"Bar!!";
-                    // Write the response
-                    tokio::io::write_all(stream, resp)
-                        .map_err(|e| format_err!("failed to send response: {}", e))
+                    // // Create a response
+                    // let resp = b"Bar!!";
+                    // // Write the response
+                    // tokio::io::write_all(stream, resp)
+                    //     .map_err(|e| format_err!("failed to send response: {}", e))
+                    futures::future::ok(stream)
                 })
                 // Gracefully terminate the stream
-                .and_then(|(stream, _req)| {
+                // TODO: Does the receiver or the sender shutdown
+                // the stream?  Eeeeeh ideally we'd be able to do either/both,
+                // but quinn is a little flaky.
+                .and_then(|stream| {
                     tokio::io::shutdown(stream)
                         .map_err(|e| format_err!("failed to shutdown stream: {}", e))
                 }).map(move |_| info!("request complete"))
@@ -187,7 +188,7 @@ impl Peer {
                     let s = stream.expect("Could not unwrap stream?");
                     let msg = b"Foo!";
                     tokio::io::write_all(s, msg)
-                        .and_then(|(stream, _vec)| tokio::io::shutdown(stream))
+                        // .and_then(|(stream, _vec)| tokio::io::shutdown(stream))
                         .map_err(|e| warn!("Failed to send request: {}", e))
                         .map(move |_| debug!("Message send complete: {:X?}", msg))
                 }).inspect(|_| info!("Disconnecting from bootstrap")),
