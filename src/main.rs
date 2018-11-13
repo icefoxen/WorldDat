@@ -39,7 +39,7 @@ use std::path::PathBuf;
 // mod connection_tests;
 // mod hash;
 // mod peer;
-mod peer2;
+// mod peer2;
 mod types;
 mod worker;
 
@@ -108,9 +108,65 @@ pub struct PeerOpt {
     logproto: bool,
 }
 
+use std::collections::HashMap;
+struct WorkerSim {
+    workers: HashMap<SocketAddr, worker::WorkerHandle>,
+}
+
+impl WorkerSim {
+    fn new() -> Self {
+        Self {
+            workers: HashMap::new(),
+        }
+    }
+
+    fn add_worker(&mut self, addr: SocketAddr, worker: worker::WorkerHandle) {
+        self.workers.insert(addr, worker);
+    }
+
+    fn run(&mut self) {
+        let mut messages = vec![];
+        loop {
+            // Collect messages.
+            // Crudely.
+            for worker in self.workers.values() {
+                while let Ok(msg) = worker.recv_message() {
+                    messages.push(msg);
+                }
+            }
+            for (dest, msg) in messages.drain(..) {
+                // Messages to unknown addresses get ignored.
+                if let Some(worker) = self.workers.get(&dest) {
+                    // TODO: This is inefficient since it creates a clone
+                    worker
+                        .controller()
+                        .message(dest, msg)
+                        .expect("Sent message to nonexistent worker?")
+                } else {
+                    warn!("Message sent to unknown peer at address: {}", dest);
+                }
+            }
+            // Don't hog CPU.
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+}
+
+/// I'm really sick of fucking around with networking, and so
+/// am just going to simulate things.
+fn heckin_simulator() {
+    let worker1 = worker::WorkerState::start();
+    let worker2 = worker::WorkerState::start();
+    let mut sim = WorkerSim::new();
+    sim.add_worker("10.0.0.1:4433".parse().unwrap(), worker1);
+    sim.add_worker("10.0.0.2:4433".parse().unwrap(), worker2);
+    sim.run();
+}
+
 fn main() {
     setup_logging();
-    let opt = PeerOpt::from_args();
-    let peer = peer2::Peer::new(opt).expect("Could not create peer struct?");
-    peer.run().expect("Peer did not exit successfully?");
+    // let opt = PeerOpt::from_args();
+    heckin_simulator();
+    // let peer = peer2::Peer::new(opt).expect("Could not create peer struct?");
+    // peer.run().expect("Peer did not exit successfully?");
 }
