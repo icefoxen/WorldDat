@@ -108,15 +108,8 @@ impl WorkerState {
         handle
     }
 
-    pub fn _send(_dest: SocketAddr, _msg: Message) {
-        // If socketaddr in map, send message through channel.
-        // If channel doesn't accept it, then that connection
-        // got closed and we have to re-open it.
-
-        // If we don't have an open connection to that address,
-        // either 'cause the connection closed or we never had one,
-        // we have to ask the networking side of the protocol
-        // to open one.
+    pub fn send(&self, dest: SocketAddr, msg: Message) {
+        self.message_sender.send((dest, msg)).expect("FIXME")
     }
 
     /// Run, forever.  You probably want to run this in a new thread.
@@ -142,7 +135,12 @@ impl WorkerState {
                 Ok(WorkerMessage::Incoming(addr, msg)) => {
                     // TODO: Whatever else.
                     info!("Incoming message from {}: {:?}", addr, msg);
-                    ()
+                    match msg {
+                        Message::Ping {} => {
+                            self.send(addr, Message::Pong {});
+                        }
+                        _ => (),
+                    }
                 }
                 Err(_) => {
                     // Sender is gone.

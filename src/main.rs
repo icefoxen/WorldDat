@@ -125,22 +125,23 @@ impl WorkerSim {
     }
 
     fn run(&mut self) {
-        let mut messages = vec![];
+        // Source, destination, message
+        let mut messages: Vec<(SocketAddr, SocketAddr, types::Message)> = vec![];
         loop {
             // Collect messages.
             // Crudely.
-            for worker in self.workers.values() {
-                while let Ok(msg) = worker.recv_message() {
-                    messages.push(msg);
+            for (src, worker) in &self.workers {
+                while let Ok((dst, msg)) = worker.recv_message() {
+                    messages.push((*src, dst, msg));
                 }
             }
-            for (dest, msg) in messages.drain(..) {
+            for (src, dest, msg) in messages.drain(..) {
                 // Messages to unknown addresses get ignored.
                 if let Some(worker) = self.workers.get(&dest) {
                     // TODO: This is inefficient since it creates a clone
                     worker
                         .controller()
-                        .message(dest, msg)
+                        .message(src, msg)
                         .expect("Sent message to nonexistent worker?")
                 } else {
                     warn!("Message sent to unknown peer at address: {}", dest);
@@ -150,6 +151,11 @@ impl WorkerSim {
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
     }
+    fn quit(mut self) {
+        for (_addr, worker) in self.workers.drain() {
+            worker.quit();
+        }
+    }
 }
 
 /// I'm really sick of fucking around with networking, and so
@@ -157,6 +163,10 @@ impl WorkerSim {
 fn heckin_simulator() {
     let worker1 = worker::WorkerState::start();
     let worker2 = worker::WorkerState::start();
+    worker1
+        .controller()
+        .message("10.0.0.2:4433".parse().unwrap(), types::Message::Ping {})
+        .unwrap();
     let mut sim = WorkerSim::new();
     sim.add_worker("10.0.0.1:4433".parse().unwrap(), worker1);
     sim.add_worker("10.0.0.2:4433".parse().unwrap(), worker2);
