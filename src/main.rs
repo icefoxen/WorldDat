@@ -7,7 +7,7 @@ extern crate futures;
 extern crate structopt;
 extern crate url;
 
-#[macro_use(slog_o)]
+// #[macro_use(slog_o)]
 extern crate slog;
 extern crate slog_async;
 extern crate slog_scope;
@@ -153,7 +153,7 @@ impl WorkerSim {
     }
     fn quit(mut self) {
         for (_addr, worker) in self.workers.drain() {
-            worker.quit();
+            worker.quit().unwrap();
         }
     }
 }
@@ -171,6 +171,7 @@ fn heckin_simulator() {
     sim.add_worker("10.0.0.1:4433".parse().unwrap(), worker1);
     sim.add_worker("10.0.0.2:4433".parse().unwrap(), worker2);
     sim.run();
+    sim.quit();
 }
 
 fn main() {
