@@ -11,15 +11,15 @@ use rustls;
 use tokio;
 use tokio::runtime::current_thread::{self, Runtime};
 
-use crate::data_mongler;
 use crate::types::*;
+use crate::worker;
 use crate::PeerOpt;
 
 pub struct Peer {
     options: PeerOpt,
     runtime: Runtime,
     connections: Rc<RefCell<HashMap<SocketAddr, quinn::Connection>>>,
-    peer_state_handle: data_mongler::WorkerHandle,
+    peer_state_handle: worker::WorkerHandle,
 }
 
 /// Creates an escaped ASCII string from the given bytes.
@@ -43,7 +43,7 @@ impl Peer {
         let runtime = Runtime::new()?;
         let connections = Rc::new(RefCell::new(HashMap::new()));
 
-        let peer_state_handle = data_mongler::WorkerState::start();
+        let peer_state_handle = worker::WorkerState::start();
         Ok(Peer {
             options,
             runtime,
@@ -105,7 +105,7 @@ impl Peer {
     fn read_message(
         remote_address: SocketAddr,
         stream: quinn::NewStream,
-        channel: data_mongler::WorkerMessageHandle,
+        channel: worker::WorkerMessageHandle,
     ) {
         // TODO: Honestly probably should just do uni streams all the way
         let stream = match stream {
@@ -147,7 +147,7 @@ impl Peer {
     fn handle_connection(
         incoming: quinn::IncomingStreams,
         connection: quinn::Connection,
-        channel: data_mongler::WorkerMessageHandle,
+        channel: worker::WorkerMessageHandle,
         connection_map: Rc<RefCell<HashMap<SocketAddr, quinn::Connection>>>,
     ) {
         let c2 = connection.clone();
@@ -198,7 +198,7 @@ impl Peer {
 
     fn handle_incoming_connection(
         conn: quinn::NewConnection,
-        channel: data_mongler::WorkerMessageHandle,
+        channel: worker::WorkerMessageHandle,
         connection_map: Rc<RefCell<HashMap<SocketAddr, quinn::Connection>>>,
     ) {
         let quinn::NewConnection {
@@ -212,7 +212,7 @@ impl Peer {
 
     fn handle_outgoing_connection(
         conn: quinn::NewClientConnection,
-        channel: data_mongler::WorkerMessageHandle,
+        channel: worker::WorkerMessageHandle,
         connection_map: Rc<RefCell<HashMap<SocketAddr, quinn::Connection>>>,
     ) {
         info!(

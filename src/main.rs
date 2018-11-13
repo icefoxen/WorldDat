@@ -39,9 +39,9 @@ use std::path::PathBuf;
 // mod connection_tests;
 // mod hash;
 // mod peer;
-mod data_mongler;
 mod peer2;
 mod types;
+mod worker;
 
 // #[cfg(test)]
 // mod tests;

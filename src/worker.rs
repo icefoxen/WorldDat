@@ -2,7 +2,6 @@
 //! This is basically the bit that actually makes the decisions and sends messages
 //! to/from the networking thread.
 
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::mpsc;
 use std::thread;
@@ -31,6 +30,7 @@ enum WorkerMessage {
 #[derive(Debug)]
 pub struct WorkerHandle {
     control_sender: mpsc::Sender<WorkerMessage>,
+    message_receiver: mpsc::Receiver<(SocketAddr, Message)>,
     thread_handle: thread::JoinHandle<()>,
 }
 
@@ -46,6 +46,13 @@ impl WorkerHandle {
             .join()
             .map_err(|e| format_err!("Error joining worker thread: {:?}", e))?;
         Ok(())
+    }
+
+    /// Pulls a message that the worker wants sent off the queue and returns it.
+    /// Does not block.
+    #[allow(dead_code)]
+    pub fn recv_message(&self) -> Result<(SocketAddr, Message), std::sync::mpsc::TryRecvError> {
+        self.message_receiver.try_recv()
     }
 
     /// Returns a copy of the control channel sender.
@@ -77,7 +84,7 @@ impl WorkerMessageHandle {
 
 pub struct WorkerState {
     /// One channel per active connection.
-    outgoing_messages_map: HashMap<SocketAddr, mpsc::Sender<Message>>,
+    message_sender: mpsc::Sender<(SocketAddr, Message)>,
     /// Receiving a message on this handle tells us to stop our main loop.
     control_receiver: mpsc::Receiver<WorkerMessage>,
 }
@@ -87,12 +94,14 @@ impl WorkerState {
     /// returns a handle to control it.
     pub fn start() -> WorkerHandle {
         let (control_sender, control_receiver) = mpsc::channel();
+        let (message_sender, message_receiver) = mpsc::channel();
         let state = WorkerState {
-            outgoing_messages_map: HashMap::new(),
+            message_sender,
             control_receiver,
         };
         let thread_handle = thread::spawn(|| state.run());
         let handle = WorkerHandle {
+            message_receiver,
             control_sender,
             thread_handle,
         };
@@ -130,9 +139,9 @@ impl WorkerState {
                     debug!("Worker woke up, anything to do?");
                     ()
                 }
-                Ok(m) => {
+                Ok(WorkerMessage::Incoming(addr, msg)) => {
                     // TODO: Whatever else.
-                    info!("Worker a message: {:?}", m);
+                    info!("Incoming message from {}: {:?}", addr, msg);
                     ()
                 }
                 Err(_) => {
