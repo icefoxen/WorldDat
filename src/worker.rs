@@ -126,7 +126,7 @@ impl WorkerState {
     /// Will quit if a message is sent on the quit channel.
     /// Returns a `PeerStateHandle` which can be used to tell it to
     /// die.
-    pub fn run(self) {
+    pub fn run(mut self) {
         loop {
             // TODO: Send occasional "wake up and do stuff if needed" messages.
             // `recv_timeout()` sucks more than advertised, it seems.
@@ -149,7 +149,27 @@ impl WorkerState {
                         Message::Ping { id: _ } => {
                             self.send(addr, Message::Pong { id: self.peer_id });
                         }
-                        Message::Pong { id: _other_id } => (),
+                        Message::Pong { id: other_id } => {
+                            // Pong ONLY happens in response to a ping, so we know
+                            // this ID is legit.
+                            // TODO: Make this actually unforgable; there's a few ways to do this,
+                            // Bittorrent does it for example
+                            self.peer_map.insert(addr, other_id)
+                        }
+                        Message::FindPeer { id: desired_id } => {
+                            // Do we know about the peer?
+                            let reply = match self.peer_map.lookup(desired_id) {
+                                Ok((peer_id, socket_addr)) => Message::FindPeerResponsePeerFound {
+                                    id: peer_id,
+                                    addr: socket_addr,
+                                },
+                                Err(neighbors) => Message::FindPeerResponsePeerNotFound {
+                                    id: desired_id,
+                                    neighbors: neighbors,
+                                },
+                            };
+                            self.send(addr, reply)
+                        }
                         _ => (),
                     }
                 }

@@ -1,6 +1,5 @@
 //! Useful types used throughout the program, I suppose.
 
-use base64;
 use hash::Blake2Hash;
 use std::cmp::Ordering;
 use std::fmt;
@@ -63,13 +62,14 @@ pub enum Message {
 
 /// Contact info for a peer, mapping the `PeerId` to an IP address and port.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ContactInfo {
+struct ContactInfo {
     peer_id: PeerId,
     address: SocketAddr,
 }
 
 impl PartialOrd for ContactInfo {
-    /// Contact info is ordered by `peer_id`
+    /// Contact info is ordered by `peer_id`,
+    /// so this just calls `self.cmp`.
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
@@ -139,7 +139,8 @@ impl PeerMap {
     ///
     /// We DO prevent duplicates though; if a peer is given that has a peer_id
     /// that already exists in the map, it will replace the old one.
-    pub fn insert(&mut self, new_peer: ContactInfo) {
+    pub fn insert(&mut self, address: SocketAddr, peer_id: PeerId) {
+        let new_peer = ContactInfo { peer_id, address };
         if let Some(i) = self.buckets[0]
             .known_peers
             .iter()
@@ -152,7 +153,10 @@ impl PeerMap {
         }
     }
 
-    pub fn lookup(&self, _peer_id: PeerId) -> Result<ContactInfo, Vec<ContactInfo>> {
+    pub fn lookup(
+        &self,
+        _peer_id: PeerId,
+    ) -> Result<(PeerId, SocketAddr), Vec<(PeerId, SocketAddr)>> {
         Err(vec![])
     }
 }

@@ -171,7 +171,8 @@ fn heckin_simulator() {
     let worker2 = worker::WorkerState::start(worker2_id);
     worker1
         .controller()
-        .message(worker2_addr, types::Message::Ping { id: worker2_id })
+        // .message(worker2_addr, types::Message::Ping { id: worker2_id })
+        .message(worker2_addr, types::Message::FindPeer { id: worker1_id })
         .unwrap();
     let mut sim = WorkerSim::new();
     sim.add_worker(worker1_addr, worker1);
