@@ -1,6 +1,6 @@
 //! Useful types used throughout the program, I suppose.
 
-use hash::Blake2Hash;
+use hash::{self, Blake2Hash};
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::fmt;
@@ -85,6 +85,7 @@ impl Ord for ContactInfo {
 
 /// A "bucket" in the DHT, a collection of `ContactInfo`'s with
 /// a fixed max size.
+#[derive(Debug, Clone)]
 struct Bucket {
     /// The peers in the bucket.
     known_peers: BTreeSet<ContactInfo>,
@@ -125,7 +126,7 @@ impl PeerMap {
         let bucket_size = 8;
         let initial_bucket = Bucket::new(bucket_size, 0, Blake2Hash::max_power() as u32);
         Self {
-            buckets: vec![initial_bucket],
+            buckets: vec![initial_bucket; hash::BLAKE2_HASH_SIZE * 8],
             bucket_size,
         }
     }
@@ -142,6 +143,7 @@ impl PeerMap {
     /// that already exists in the map, it will replace the old one.
     pub fn insert(&mut self, address: SocketAddr, peer_id: PeerId) {
         let new_peer = ContactInfo { peer_id, address };
+        let distance = self.peer_id.bitxor(peer_id);
 
         // /////
         // Find which bucket the peer SHOULD be in.
