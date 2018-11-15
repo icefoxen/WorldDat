@@ -5,6 +5,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::net::SocketAddr;
+use std::ops::BitXor;
 
 /// A hash identifying a Peer.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -27,6 +28,31 @@ impl PeerId {
 
     pub fn to_base64(&self) -> String {
         self.0.to_base64()
+    }
+
+    /// Returns some number N which is `floor(log2(the distance
+    /// between this `PeerId` and the given one)`.
+    pub fn distance_rank(&self, other: PeerId) -> u32 {
+        let mut res: u32 = 0;
+        let distance = self.0 ^ other.0;
+        for d in &distance.0[..] {
+            // TODO: This is... kinda horrible.  Why the shit
+            // don't we have an integer log2?
+            // https://stackoverflow.com/questions/994593/how-to-do-an-integer-log2-in-c
+            let mut idx = *d;
+            if idx == 0 {
+                break;
+            }
+            while idx != 0 {
+                idx >>= 1;
+                res += 1;
+            }
+        }
+        res
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &(self.0).0[..]
     }
 }
 
@@ -141,9 +167,8 @@ impl PeerMap {
     ///
     /// We DO prevent duplicates though; if a peer is given that has a peer_id
     /// that already exists in the map, it will replace the old one.
-    pub fn insert(&mut self, address: SocketAddr, peer_id: PeerId) {
+    pub fn insert(&mut self, self_id: PeerId, address: SocketAddr, peer_id: PeerId) {
         let new_peer = ContactInfo { peer_id, address };
-        let distance = self.peer_id.bitxor(peer_id);
 
         // /////
         // Find which bucket the peer SHOULD be in.

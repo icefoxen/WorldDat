@@ -154,7 +154,7 @@ impl WorkerState {
                             // this ID is legit.
                             // TODO: Make this actually unforgable; there's a few ways to do this,
                             // Bittorrent does it for example
-                            self.peer_map.insert(addr, other_id)
+                            self.peer_map.insert(self.peer_id, addr, other_id)
                         }
                         Message::FindPeer { id: desired_id } => {
                             // Do we know about the peer?
