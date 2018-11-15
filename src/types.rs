@@ -2,6 +2,7 @@
 
 use hash::Blake2Hash;
 use std::cmp::Ordering;
+use std::collections::BTreeSet;
 use std::fmt;
 use std::net::SocketAddr;
 
@@ -86,7 +87,7 @@ impl Ord for ContactInfo {
 /// a fixed max size.
 struct Bucket {
     /// The peers in the bucket.
-    known_peers: Vec<ContactInfo>,
+    known_peers: BTreeSet<ContactInfo>,
     /// The min and max address range of the bucket; it stores peers with ID's
     /// in the range of `[2^min,2^max)`.
     ///
@@ -98,7 +99,7 @@ impl Bucket {
     fn new(bucket_size: usize, min_address: u32, max_address: u32) -> Self {
         assert!(min_address < max_address);
         Self {
-            known_peers: Vec::with_capacity(bucket_size),
+            known_peers: BTreeSet::new(),
             address_range: (min_address, max_address),
         }
     }
@@ -141,6 +142,24 @@ impl PeerMap {
     /// that already exists in the map, it will replace the old one.
     pub fn insert(&mut self, address: SocketAddr, peer_id: PeerId) {
         let new_peer = ContactInfo { peer_id, address };
+
+        // /////
+        // Find which bucket the peer SHOULD be in.
+        // The list of buckets should be short, so linear search should be fast.
+        let target_bucket = self
+            .buckets
+            .iter_mut()
+            .find(|bucket| true)
+            .expect("Can't find bucket to add new peer to; should never happen!!");
+        if target_bucket.known_peers.len() > self.bucket_size {
+            // Split bucket
+        } else {
+            // Just insert the thing
+            target_bucket.known_peers.insert(new_peer);
+        }
+        // /////
+
+        /*
         if let Some(i) = self.buckets[0]
             .known_peers
             .iter()
@@ -151,6 +170,7 @@ impl PeerMap {
             self.buckets[0].known_peers.push(new_peer);
             self.buckets[0].known_peers.sort();
         }
+        */
     }
 
     pub fn lookup(
