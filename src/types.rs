@@ -35,18 +35,12 @@ impl PeerId {
     pub fn distance_rank(&self, other: PeerId) -> u32 {
         let mut res: u32 = 0;
         let distance = self.0 ^ other.0;
+        fn log2(x: u8) -> u32 {
+            8 - x.leading_zeros() - 1
+        }
         for d in &distance.0[..] {
-            // TODO: This is... kinda horrible.  Why the shit
-            // don't we have an integer log2?
-            // https://stackoverflow.com/questions/994593/how-to-do-an-integer-log2-in-c
-            let mut idx = *d;
-            if idx == 0 {
-                break;
-            }
-            while idx != 0 {
-                idx >>= 1;
-                res += 1;
-            }
+            // TODO: Double check
+            res += log2(*d);
         }
         res
     }
