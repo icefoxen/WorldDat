@@ -18,9 +18,9 @@ use crate::types::*;
 enum WorkerMessage {
     /// Stop the worker thread.
     Quit,
-    /// Wake up and check to see if there's anything that needs doing.
-    /// Crude but it'll work.
-    Wake,
+    // /// Wake up and check to see if there's anything that needs doing.
+    // /// Crude but it'll work.
+    // Wake,
     /// A message was received from a peer!
     Incoming(SocketAddr, Message),
 }
@@ -87,17 +87,27 @@ pub struct WorkerState {
     message_sender: mpsc::Sender<(SocketAddr, Message)>,
     /// Receiving a message on this handle tells us to stop our main loop.
     control_receiver: mpsc::Receiver<WorkerMessage>,
+
+    // Stuff that has to do with actually making decisions instead of
+    // communicating with other threads.
+    /// The ID of the peer.
+    peer_id: PeerId,
+    peer_map: PeerMap,
 }
 
 impl WorkerState {
     /// Creates a new `PeerState` and runs it in its own thread,
     /// returns a handle to control it.
-    pub fn start() -> WorkerHandle {
+    pub fn start(peer_id: PeerId) -> WorkerHandle {
         let (control_sender, control_receiver) = mpsc::channel();
         let (message_sender, message_receiver) = mpsc::channel();
+        let peer_map = PeerMap::new();
         let state = WorkerState {
             message_sender,
             control_receiver,
+
+            peer_id,
+            peer_map,
         };
         let thread_handle = thread::spawn(|| state.run());
         let handle = WorkerHandle {
@@ -126,19 +136,20 @@ impl WorkerState {
                     info!("Worker got quit message, quitting...");
                     break;
                 }
-                Ok(WorkerMessage::Wake) => {
-                    // Just continue and see if there's anything else
-                    // we need to do...
-                    debug!("Worker woke up, anything to do?");
-                    ()
-                }
+                // Ok(WorkerMessage::Wake) => {
+                //     // Just continue and see if there's anything else
+                //     // we need to do...
+                //     debug!("Worker woke up, anything to do?");
+                //     ()
+                // }
                 Ok(WorkerMessage::Incoming(addr, msg)) => {
                     // TODO: Whatever else.
                     info!("Incoming message from {}: {:?}", addr, msg);
                     match msg {
-                        Message::Ping {} => {
-                            self.send(addr, Message::Pong {});
+                        Message::Ping { id: _ } => {
+                            self.send(addr, Message::Pong { id: self.peer_id });
                         }
+                        Message::Pong { id: _other_id } => (),
                         _ => (),
                     }
                 }

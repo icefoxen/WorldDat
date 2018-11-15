@@ -10,7 +10,8 @@ use std::ops;
 use blake2;
 use serde;
 
-/// The number of bytes in a `Blake2Hash`.
+/// The number of bytes in a `Blake2Hash`, aka `Blake2b`
+/// (the 512-bit version of blake2).
 pub const BLAKE2_HASH_SIZE: usize = 64;
 
 /// A hash uniquely identifying a peer or data type, barring hash collisions.
@@ -121,5 +122,9 @@ impl Blake2Hash {
     /// In this case, 512 for Blake2b.
     pub fn max_power() -> usize {
         BLAKE2_HASH_SIZE * 8
+    }
+
+    pub fn to_base64(&self) -> String {
+        base64::encode(&self.0[..])
     }
 }

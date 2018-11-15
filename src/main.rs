@@ -30,6 +30,8 @@ extern crate serde_derive;
 #[allow(unused_imports)]
 #[macro_use]
 extern crate lazy_static;
+extern crate base64;
+extern crate rand;
 
 use structopt::StructOpt;
 
@@ -37,7 +39,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 // mod connection_tests;
-// mod hash;
+mod hash;
 // mod peer;
 // mod peer2;
 mod types;
@@ -161,15 +163,19 @@ impl WorkerSim {
 /// I'm really sick of fucking around with networking, and so
 /// am just going to simulate things.
 fn heckin_simulator() {
-    let worker1 = worker::WorkerState::start();
-    let worker2 = worker::WorkerState::start();
+    let worker1_id = types::PeerId::new_insecure_random();
+    let worker1_addr = "10.0.0.1:4433".parse().unwrap();
+    let worker1 = worker::WorkerState::start(worker1_id);
+    let worker2_id = types::PeerId::new_insecure_random();
+    let worker2_addr = "10.0.0.2:4433".parse().unwrap();
+    let worker2 = worker::WorkerState::start(worker2_id);
     worker1
         .controller()
-        .message("10.0.0.2:4433".parse().unwrap(), types::Message::Ping {})
+        .message(worker2_addr, types::Message::Ping { id: worker2_id })
         .unwrap();
     let mut sim = WorkerSim::new();
-    sim.add_worker("10.0.0.1:4433".parse().unwrap(), worker1);
-    sim.add_worker("10.0.0.2:4433".parse().unwrap(), worker2);
+    sim.add_worker(worker1_addr, worker1);
+    sim.add_worker(worker2_addr, worker2);
     sim.run();
     sim.quit();
 }

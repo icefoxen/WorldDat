@@ -1,9 +1,158 @@
 //! Useful types used throughout the program, I suppose.
 
+use base64;
+use hash::Blake2Hash;
+use std::cmp::Ordering;
+use std::fmt;
+use std::net::SocketAddr;
+
+/// A hash identifying a Peer.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct PeerId(Blake2Hash);
+
+impl PeerId {
+    /// Creates a new `PeerId` from the given seed
+    pub fn new(seed: &[u8]) -> PeerId {
+        PeerId(Blake2Hash::new(seed))
+    }
+
+    /// Creates a new `PeerId` from an UNSECURE pRNG keykey.
+    /// Useful for testing only!
+    pub fn new_insecure_random() -> PeerId {
+        use rand::{self, Rng};
+        let v = &mut vec![0; 64];
+        rand::thread_rng().fill(v.as_mut_slice());
+        PeerId(Blake2Hash::new(v))
+    }
+
+    pub fn to_base64(&self) -> String {
+        self.0.to_base64()
+    }
+}
+
+impl fmt::Debug for PeerId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "PEERID:{}", self.to_base64())
+    }
+}
+
 /// The actual serializable messages that can be sent back and forth.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Message {
-    Ping {},
-    Pong {},
-    Raw { data: Box<[u8]> },
+    Ping {
+        id: PeerId,
+    },
+    Pong {
+        id: PeerId,
+    },
+    FindPeer {
+        id: PeerId,
+    },
+    FindPeerResponsePeerFound {
+        id: PeerId,
+        addr: SocketAddr,
+    },
+    FindPeerResponsePeerNotFound {
+        id: PeerId,
+        /// It's ok to have this be unbounded size 'cause we only receive a fixed-size
+        /// buffer from any client...  I'm pretty sure.
+        /// TODO: Verify!
+        neighbors: Vec<(PeerId, SocketAddr)>,
+    },
+}
+
+/// Contact info for a peer, mapping the `PeerId` to an IP address and port.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContactInfo {
+    peer_id: PeerId,
+    address: SocketAddr,
+}
+
+impl PartialOrd for ContactInfo {
+    /// Contact info is ordered by `peer_id`
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ContactInfo {
+    /// Contact info is ordered by `peer_id`
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.peer_id.cmp(&other.peer_id)
+    }
+}
+
+/// A "bucket" in the DHT, a collection of `ContactInfo`'s with
+/// a fixed max size.
+struct Bucket {
+    /// The peers in the bucket.
+    known_peers: Vec<ContactInfo>,
+    /// The min and max address range of the bucket; it stores peers with ID's
+    /// in the range of `[2^min,2^max)`.
+    ///
+    /// TODO: u32 is way overkill here, but, KISS for now.
+    address_range: (u32, u32),
+}
+
+impl Bucket {
+    fn new(bucket_size: usize, min_address: u32, max_address: u32) -> Self {
+        assert!(min_address < max_address);
+        Self {
+            known_peers: Vec::with_capacity(bucket_size),
+            address_range: (min_address, max_address),
+        }
+    }
+}
+
+/// The peer's view of the DHT, a mapping of PeerId to contact info.
+/// As per Kademila and Bittorrent DHT, the further away from the peer's
+/// hash (as measured by the XOR distance metric), the lower resolution
+/// it is.
+///
+/// TODO: Can the `im` crate serve any purpose here?  I'm really not sure
+/// if it can, but it's so *neat*...
+pub struct PeerMap {
+    buckets: Vec<Bucket>,
+    /// The maximum number of peers per bucket.
+    /// Currently hardwired at 8 in `new()`, but there's no reason we wouldn't
+    /// want the ability to fiddle with it at runtime.
+    bucket_size: usize,
+}
+
+impl PeerMap {
+    pub fn new() -> Self {
+        let bucket_size = 8;
+        let initial_bucket = Bucket::new(bucket_size, 0, Blake2Hash::max_power() as u32);
+        Self {
+            buckets: vec![initial_bucket],
+            bucket_size,
+        }
+    }
+
+    /// Insert a new peer into the PeerMap,
+    ///
+    /// TODO: Should return an error or something if doing so
+    /// would need to evict a current peer; that should be based
+    /// on peer quality measures we don't track yet.
+    ///
+    /// For now though, we don't even bother splitting buckets or such.
+    ///
+    /// We DO prevent duplicates though; if a peer is given that has a peer_id
+    /// that already exists in the map, it will replace the old one.
+    pub fn insert(&mut self, new_peer: ContactInfo) {
+        if let Some(i) = self.buckets[0]
+            .known_peers
+            .iter()
+            .position(|ci| ci.peer_id == new_peer.peer_id)
+        {
+            self.buckets[0].known_peers[i].peer_id = new_peer.peer_id;
+        } else {
+            self.buckets[0].known_peers.push(new_peer);
+            self.buckets[0].known_peers.sort();
+        }
+    }
+
+    pub fn lookup(&self, _peer_id: PeerId) -> Result<ContactInfo, Vec<ContactInfo>> {
+        Err(vec![])
+    }
 }
