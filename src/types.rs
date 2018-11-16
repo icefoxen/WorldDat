@@ -1,11 +1,10 @@
 //! Useful types used throughout the program, I suppose.
 
-use hash::{self, Blake2Hash};
+use hash::Blake2Hash;
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::net::SocketAddr;
-use std::ops::BitXor;
 
 /// A hash identifying a Peer.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -33,16 +32,8 @@ impl PeerId {
     /// Returns some number N which is `floor(log2(the distance
     /// between this `PeerId` and the given one)`.
     pub fn distance_rank(&self, other: PeerId) -> u32 {
-        let mut res: u32 = 0;
         let distance = self.0 ^ other.0;
-        fn log2(x: u8) -> u32 {
-            8 - x.leading_zeros() - 1
-        }
-        for d in &distance.0[..] {
-            // TODO: Double check
-            res += log2(*d);
-        }
-        res
+        distance.leading_zeros()
     }
 
     pub fn bytes(&self) -> &[u8] {
@@ -108,7 +99,8 @@ impl Ord for ContactInfo {
 #[derive(Debug, Clone)]
 struct Bucket {
     /// The peers in the bucket.
-    known_peers: BTreeSet<ContactInfo>,
+    /// TODO: HashMap?  We need to make `Blake2Hash` impl `Hash` and idgaf right now.
+    known_peers: BTreeMap<PeerId, SocketAddr>,
     /// The min and max address range of the bucket; it stores peers with ID's
     /// in the range of `[2^min,2^max)`.
     ///
@@ -120,9 +112,29 @@ impl Bucket {
     fn new(bucket_size: usize, min_address: u32, max_address: u32) -> Self {
         assert!(min_address < max_address);
         Self {
-            known_peers: BTreeSet::new(),
+            known_peers: BTreeMap::new(),
             address_range: (min_address, max_address),
         }
+    }
+
+    /// Adds the new peer to the bucket.
+    ///
+    /// TODO: Remove a peer if the bucket gets too big.
+    /// ALSO TODO: Ponder using `replace()` instead of `insert()`, since
+    /// we say ContactInfo's are equal if their PeerId's are equal; the address
+    /// may have changed.
+    fn insert(&mut self, peer: ContactInfo) {
+        if self
+            .known_peers
+            .insert(peer.peer_id, peer.address)
+            .is_none()
+        {
+            info!("Peer {:?} got new address: {}", peer.peer_id, peer.address);
+        }
+    }
+
+    fn contains(&self, peer: PeerId) -> Option<(PeerId, SocketAddr)> {
+        self.known_peers.get(&peer).map(|addr| (peer, *addr))
     }
 }
 
@@ -146,7 +158,7 @@ impl PeerMap {
         let bucket_size = 8;
         let initial_bucket = Bucket::new(bucket_size, 0, Blake2Hash::max_power() as u32);
         Self {
-            buckets: vec![initial_bucket; hash::BLAKE2_HASH_SIZE * 8],
+            buckets: vec![initial_bucket; Blake2Hash::max_power()],
             bucket_size,
         }
     }
@@ -163,41 +175,58 @@ impl PeerMap {
     /// that already exists in the map, it will replace the old one.
     pub fn insert(&mut self, self_id: PeerId, address: SocketAddr, peer_id: PeerId) {
         let new_peer = ContactInfo { peer_id, address };
-
-        // /////
-        // Find which bucket the peer SHOULD be in.
-        // The list of buckets should be short, so linear search should be fast.
-        let target_bucket = self
-            .buckets
-            .iter_mut()
-            .find(|bucket| true)
-            .expect("Can't find bucket to add new peer to; should never happen!!");
-        if target_bucket.known_peers.len() > self.bucket_size {
-            // Split bucket
-        } else {
-            // Just insert the thing
-            target_bucket.known_peers.insert(new_peer);
-        }
-        // /////
-
-        /*
-        if let Some(i) = self.buckets[0]
-            .known_peers
-            .iter()
-            .position(|ci| ci.peer_id == new_peer.peer_id)
-        {
-            self.buckets[0].known_peers[i].peer_id = new_peer.peer_id;
-        } else {
-            self.buckets[0].known_peers.push(new_peer);
-            self.buckets[0].known_peers.sort();
-        }
-        */
+        let distance_rank = self_id.distance_rank(peer_id);
+        self.buckets[distance_rank as usize].insert(new_peer);
     }
 
+    /// Returns a Vec of the `bucket_size` closest peers we can find to the given one,
+    /// in no particular order.
+    fn find_closest_peers(&self, self_id: PeerId, peer_id: PeerId) -> Vec<(PeerId, SocketAddr)> {
+        // The closest peers will be in the same bucket as the target peer.
+        let search_bucket = self_id.distance_rank(peer_id) as usize;
+        let mut search_width = 1;
+        let mut search_results = vec![];
+        search_results.extend(self.buckets[search_bucket].known_peers.iter());
+        while search_results.len() < self.bucket_size && search_width < Blake2Hash::max_power() {
+            let target_behind = search_bucket.saturating_sub(search_width);
+            // This one heckin' better not overflow.
+            let target_ahead = search_bucket + search_width;
+
+            // target_behind is negative, or would be if we weren't doing saturating_sub()
+            // on an unsigned integer.
+            if search_width > search_bucket {
+                search_results.extend(self.buckets[target_behind].known_peers.iter());
+            }
+
+            if target_ahead < Blake2Hash::max_power() as usize {
+                search_results.extend(self.buckets[target_ahead].known_peers.iter());
+            }
+            search_width += 1;
+        }
+        search_results
+            .iter()
+            .map(|ci: &(&PeerId, &SocketAddr)| (*ci.0, *ci.1))
+            .take(self.bucket_size)
+            .collect()
+    }
+
+    /// Just checks whether we know about the given peer
+    pub fn contains(&self, self_id: PeerId, peer_id: PeerId) -> Option<(PeerId, SocketAddr)> {
+        let search_bucket = self_id.distance_rank(peer_id) as usize;
+        self.buckets[search_bucket].contains(peer_id)
+    }
+
+    /// Looks up the given peer id.  If we know about it, return the address we have,
+    /// otherwise return a list of the nearest peers we know to it.
     pub fn lookup(
         &self,
-        _peer_id: PeerId,
+        self_id: PeerId,
+        peer_id: PeerId,
     ) -> Result<(PeerId, SocketAddr), Vec<(PeerId, SocketAddr)>> {
-        Err(vec![])
+        if let Some(res) = self.contains(self_id, peer_id) {
+            Ok(res)
+        } else {
+            Err(self.find_closest_peers(self_id, peer_id))
+        }
     }
 }

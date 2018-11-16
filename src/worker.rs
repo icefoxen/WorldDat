@@ -146,8 +146,16 @@ impl WorkerState {
                     // TODO: Whatever else.
                     info!("Incoming message from {}: {:?}", addr, msg);
                     match msg {
-                        Message::Ping { id: _ } => {
+                        Message::Ping { id: other_id } => {
                             self.send(addr, Message::Pong { id: self.peer_id });
+
+                            // If we don't know about this peer,
+                            // ping the thing back to see if it's actually legit.
+                            // Eventually maybe we want timeouts involved here, or such?
+                            // Maybe not, that should happen on its own time.
+                            if self.peer_map.contains(self.peer_id, other_id).is_none() {
+                                self.send(addr, Message::Ping { id: self.peer_id });
+                            }
                         }
                         Message::Pong { id: other_id } => {
                             // Pong ONLY happens in response to a ping, so we know
@@ -158,7 +166,7 @@ impl WorkerState {
                         }
                         Message::FindPeer { id: desired_id } => {
                             // Do we know about the peer?
-                            let reply = match self.peer_map.lookup(desired_id) {
+                            let reply = match self.peer_map.lookup(self.peer_id, desired_id) {
                                 Ok((peer_id, socket_addr)) => Message::FindPeerResponsePeerFound {
                                     id: peer_id,
                                     addr: socket_addr,

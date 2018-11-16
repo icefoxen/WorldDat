@@ -113,17 +113,44 @@ pub struct PeerOpt {
 use std::collections::HashMap;
 struct WorkerSim {
     workers: HashMap<SocketAddr, worker::WorkerHandle>,
+    bootstrap: Option<SocketAddr>,
 }
 
 impl WorkerSim {
     fn new() -> Self {
         Self {
             workers: HashMap::new(),
+            bootstrap: None,
         }
     }
 
+    /// Sets which bootstrap address new workers will attempt to connect to.
+    fn set_bootstrap(&mut self, bootstrap: &str) {
+        self.bootstrap = Some(bootstrap.parse().unwrap());
+    }
+
+    /// Adds an already-created worker with the given address.
     fn add_worker(&mut self, addr: SocketAddr, worker: worker::WorkerHandle) {
         self.workers.insert(addr, worker);
+    }
+
+    /// Creates a new worker with a random ID and adds it.  The string must parse to a valid `SocketAddr`.
+    ///
+    /// If we have a bootstrap address, the worker will send a message to it trying to look
+    /// up its own address to get some nearby peers.
+    fn add_new_worker(&mut self, addr: &str) {
+        let w_id = types::PeerId::new_insecure_random();
+        let w_addr = addr.parse().unwrap();
+        let w = worker::WorkerState::start(w_id);
+        if let Some(bootstrap) = self.bootstrap {
+            w.controller()
+                .message(bootstrap, types::Message::Ping { id: w_id })
+                .unwrap();
+            w.controller()
+                .message(bootstrap, types::Message::FindPeer { id: w_id })
+                .unwrap();
+        }
+        self.add_worker(w_addr, w);
     }
 
     fn run(&mut self) {
@@ -163,20 +190,26 @@ impl WorkerSim {
 /// I'm really sick of fucking around with networking, and so
 /// am just going to simulate things.
 fn heckin_simulator() {
-    let worker1_id = types::PeerId::new_insecure_random();
-    let worker1_addr = "10.0.0.1:4433".parse().unwrap();
-    let worker1 = worker::WorkerState::start(worker1_id);
-    let worker2_id = types::PeerId::new_insecure_random();
-    let worker2_addr = "10.0.0.2:4433".parse().unwrap();
-    let worker2 = worker::WorkerState::start(worker2_id);
-    worker1
-        .controller()
-        // .message(worker2_addr, types::Message::Ping { id: worker2_id })
-        .message(worker2_addr, types::Message::FindPeer { id: worker1_id })
-        .unwrap();
+    // let worker1_id = types::PeerId::new_insecure_random();
+    // let worker1_addr = "10.0.0.1:4433".parse().unwrap();
+    // let worker1 = worker::WorkerState::start(worker1_id);
+    // let worker2_id = types::PeerId::new_insecure_random();
+    // let worker2_addr = "10.0.0.2:4433".parse().unwrap();
+    // let worker2 = worker::WorkerState::start(worker2_id);
+    // worker1
+    //     .controller()
+    //     // .message(worker2_addr, types::Message::Ping { id: worker2_id })
+    //     .message(worker2_addr, types::Message::FindPeer { id: worker1_id })
+    // .unwrap();
     let mut sim = WorkerSim::new();
-    sim.add_worker(worker1_addr, worker1);
-    sim.add_worker(worker2_addr, worker2);
+    sim.set_bootstrap("10.0.0.1:4433");
+    // sim.add_worker(worker1_addr, worker1);
+    // sim.add_worker(worker2_addr, worker2);
+    sim.add_new_worker("10.0.0.1:4433");
+    info!("");
+    // sim.add_new_worker("10.0.0.2:4433");
+    // sim.add_new_worker("10.0.0.3:4433");
+    // sim.add_new_worker("10.0.0.4:4433");
     sim.run();
     sim.quit();
 }
