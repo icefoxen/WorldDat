@@ -177,7 +177,7 @@ impl WorkerSim {
                 }
             }
             // Don't hog CPU.
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            std::thread::sleep(std::time::Duration::from_millis(1000));
         }
     }
     fn quit(mut self) {
@@ -190,24 +190,10 @@ impl WorkerSim {
 /// I'm really sick of fucking around with networking, and so
 /// am just going to simulate things.
 fn heckin_simulator() {
-    // let worker1_id = types::PeerId::new_insecure_random();
-    // let worker1_addr = "10.0.0.1:4433".parse().unwrap();
-    // let worker1 = worker::WorkerState::start(worker1_id);
-    // let worker2_id = types::PeerId::new_insecure_random();
-    // let worker2_addr = "10.0.0.2:4433".parse().unwrap();
-    // let worker2 = worker::WorkerState::start(worker2_id);
-    // worker1
-    //     .controller()
-    //     // .message(worker2_addr, types::Message::Ping { id: worker2_id })
-    //     .message(worker2_addr, types::Message::FindPeer { id: worker1_id })
-    // .unwrap();
     let mut sim = WorkerSim::new();
     sim.set_bootstrap("10.0.0.1:4433");
-    // sim.add_worker(worker1_addr, worker1);
-    // sim.add_worker(worker2_addr, worker2);
     sim.add_new_worker("10.0.0.1:4433");
-    info!("");
-    // sim.add_new_worker("10.0.0.2:4433");
+    sim.add_new_worker("10.0.0.2:4433");
     // sim.add_new_worker("10.0.0.3:4433");
     // sim.add_new_worker("10.0.0.4:4433");
     sim.run();
