@@ -35,8 +35,10 @@ extern crate rand;
 
 use structopt::StructOpt;
 
+use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::time::{self, Duration, Instant};
 
 // mod connection_tests;
 mod hash;
@@ -114,6 +116,14 @@ use std::collections::HashMap;
 struct WorkerSim {
     workers: HashMap<SocketAddr, worker::WorkerHandle>,
     bootstrap: Option<SocketAddr>,
+
+    /// A queue of workers to add with associated delays, so we can simulate
+    /// having new workers drop into the network instead of having them all
+    /// appear instantly.
+    ///
+    /// The `run()` method sorts the vec by duration, in reverse, so we just
+    /// pop the workers we need off the end.
+    worker_add_queue: Vec<(SocketAddr, worker::WorkerHandle, Duration)>,
 }
 
 impl WorkerSim {
@@ -121,6 +131,7 @@ impl WorkerSim {
         Self {
             workers: HashMap::new(),
             bootstrap: None,
+            worker_add_queue: Vec::new(),
         }
     }
 
@@ -138,7 +149,7 @@ impl WorkerSim {
     ///
     /// If we have a bootstrap address, the worker will send a message to it trying to look
     /// up its own address to get some nearby peers.
-    fn add_new_worker(&mut self, addr: &str) {
+    fn add_new_worker(&mut self, addr: &str, delay: Duration) {
         let w_id = types::PeerId::new_insecure_random();
         let w_addr = addr.parse().unwrap();
         let w = worker::WorkerState::start(w_id);
@@ -150,13 +161,31 @@ impl WorkerSim {
                 .message(bootstrap, types::Message::FindPeer { id: w_id })
                 .unwrap();
         }
-        self.add_worker(w_addr, w);
+        self.worker_add_queue.push((w_addr, w, delay));
     }
 
     fn run(&mut self) {
         // Source, destination, message
         let mut messages: Vec<(SocketAddr, SocketAddr, types::Message)> = vec![];
+        let start = Instant::now();
+        self.worker_add_queue
+            .sort_by(|(_, _, d1), (_, _, d2)| d2.cmp(d1));
         loop {
+            // Add new workers, if any need adding.
+            if let Some((addr, worker, dur)) = self.worker_add_queue.pop() {
+                if dur < start.elapsed() {
+                    info!("Adding worker: {}", addr);
+                    self.add_worker(addr, worker);
+                } else {
+                    // debug!(
+                    //     "Worker should be added at {:?} but it's only {:?}",
+                    //     dur,
+                    //     start.elapsed()
+                    // );
+                    // Icky but it makes the borrow checker happy
+                    self.worker_add_queue.push((addr, worker, dur));
+                }
+            }
             // Collect messages.
             // Crudely.
             for (src, worker) in &self.workers {
@@ -176,8 +205,8 @@ impl WorkerSim {
                     warn!("Message sent to unknown peer at address: {}", dest);
                 }
             }
-            // Don't hog CPU.
-            std::thread::sleep(std::time::Duration::from_millis(1000));
+            // Don't hog CPU... too much.
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
     }
     fn quit(mut self) {
@@ -192,8 +221,9 @@ impl WorkerSim {
 fn heckin_simulator() {
     let mut sim = WorkerSim::new();
     sim.set_bootstrap("10.0.0.1:4433");
-    sim.add_new_worker("10.0.0.1:4433");
-    sim.add_new_worker("10.0.0.2:4433");
+    sim.add_new_worker("10.0.0.1:4433", Duration::from_secs(0));
+    sim.add_new_worker("10.0.0.2:4433", Duration::from_secs(1));
+    sim.add_new_worker("10.0.0.2:4433", Duration::from_secs(2));
     // sim.add_new_worker("10.0.0.3:4433");
     // sim.add_new_worker("10.0.0.4:4433");
     sim.run();

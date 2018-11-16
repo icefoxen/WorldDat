@@ -188,6 +188,8 @@ impl PeerMap {
         let mut search_results = vec![];
         search_results.extend(self.buckets[search_bucket].known_peers.iter());
         while search_results.len() < self.bucket_size && search_width < Blake2Hash::max_power() {
+            trace!("searching width {} from {}", search_width, search_bucket);
+            trace!("search_results: {:?}", search_results);
             let target_behind = search_bucket.saturating_sub(search_width);
             // This one heckin' better not overflow.
             let target_ahead = search_bucket + search_width;
