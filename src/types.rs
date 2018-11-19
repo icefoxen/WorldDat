@@ -105,6 +105,7 @@ struct Bucket {
     /// in the range of `[2^min,2^max)`.
     ///
     /// TODO: u32 is way overkill here, but, KISS for now.
+    /// ALSO TODO: This is no longer necessary.
     address_range: (u32, u32),
 }
 
@@ -176,8 +177,13 @@ impl PeerMap {
     pub fn insert(&mut self, self_id: PeerId, address: SocketAddr, peer_id: PeerId) {
         let new_peer = ContactInfo { peer_id, address };
         let distance_rank = self_id.distance_rank(peer_id);
-        debug!("Inserting peer {:?} at distance {}", peer_id, distance_rank);
         self.buckets[distance_rank as usize].insert(new_peer);
+        debug!(
+            "Inserted peer {:?} at distance {}, now have {} peers",
+            peer_id,
+            distance_rank,
+            self.count()
+        );
     }
 
     /// Returns a Vec of the `bucket_size` closest peers we can find to the given one,
@@ -231,5 +237,13 @@ impl PeerMap {
         } else {
             Err(self.find_closest_peers(self_id, peer_id))
         }
+    }
+
+    /// Returns total number of peers known.
+    /// TODO: usize? u64?
+    pub fn count(&self) -> u32 {
+        self.buckets
+            .iter()
+            .fold(0, |acc, bucket| acc + (bucket.known_peers.len() as u32))
     }
 }

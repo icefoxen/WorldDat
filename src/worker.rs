@@ -29,6 +29,7 @@ enum WorkerMessage {
 /// is running in its own thread...
 #[derive(Debug)]
 pub struct WorkerHandle {
+    peer_id: PeerId,
     control_sender: mpsc::Sender<WorkerMessage>,
     message_receiver: mpsc::Receiver<(SocketAddr, Message)>,
     thread_handle: thread::JoinHandle<()>,
@@ -61,6 +62,10 @@ impl WorkerHandle {
         WorkerMessageHandle {
             control_sender: self.control_sender.clone(),
         }
+    }
+
+    pub fn peer_id(&self) -> PeerId {
+        self.peer_id
     }
 }
 
@@ -98,10 +103,13 @@ pub struct WorkerState {
 impl WorkerState {
     /// Creates a new `PeerState` and runs it in its own thread,
     /// returns a handle to control it.
-    pub fn start(peer_id: PeerId) -> WorkerHandle {
+    pub fn start(peer_id: PeerId, addr: SocketAddr) -> WorkerHandle {
         let (control_sender, control_receiver) = mpsc::channel();
         let (message_sender, message_receiver) = mpsc::channel();
-        let peer_map = PeerMap::new();
+        let mut peer_map = PeerMap::new();
+        // Add self to peer map
+        peer_map.insert(peer_id, addr, peer_id);
+
         let state = WorkerState {
             message_sender,
             control_receiver,
@@ -114,6 +122,7 @@ impl WorkerState {
             message_receiver,
             control_sender,
             thread_handle,
+            peer_id,
         };
         handle
     }
@@ -150,6 +159,7 @@ impl WorkerState {
                     );
                     match msg {
                         Message::Ping { id: other_id } => {
+                            debug!("Ping from {}", addr);
                             self.send(addr, Message::Pong { id: self.peer_id });
 
                             // If we don't know about this peer,

@@ -152,7 +152,7 @@ impl WorkerSim {
     fn add_new_worker(&mut self, addr: &str, delay: Duration) {
         let w_id = types::PeerId::new_insecure_random();
         let w_addr = addr.parse().unwrap();
-        let w = worker::WorkerState::start(w_id);
+        let w = worker::WorkerState::start(w_id, w_addr);
         if let Some(bootstrap) = self.bootstrap {
             w.controller()
                 .message(bootstrap, types::Message::Ping { id: w_id })
@@ -174,7 +174,7 @@ impl WorkerSim {
             // Add new workers, if any need adding.
             if let Some((addr, worker, dur)) = self.worker_add_queue.pop() {
                 if dur < start.elapsed() {
-                    info!("Adding worker: {}", addr);
+                    info!("Adding worker: {:?} {}", worker.peer_id(), addr);
                     self.add_worker(addr, worker);
                 } else {
                     // debug!(
@@ -222,8 +222,8 @@ fn heckin_simulator() {
     let mut sim = WorkerSim::new();
     sim.set_bootstrap("10.0.0.1:4433");
     sim.add_new_worker("10.0.0.1:4433", Duration::from_secs(0));
-    sim.add_new_worker("10.0.0.2:4433", Duration::from_secs(1));
     sim.add_new_worker("10.0.0.2:4433", Duration::from_secs(2));
+    sim.add_new_worker("10.0.0.3:4433", Duration::from_secs(10));
     // sim.add_new_worker("10.0.0.3:4433");
     // sim.add_new_worker("10.0.0.4:4433");
     sim.run();
