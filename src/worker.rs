@@ -144,7 +144,10 @@ impl WorkerState {
                 // }
                 Ok(WorkerMessage::Incoming(addr, msg)) => {
                     // TODO: Whatever else.
-                    info!("Incoming message from {}: {:?}", addr, msg);
+                    info!(
+                        "Incoming message to {:?} from {}: {:?}",
+                        self.peer_id, addr, msg
+                    );
                     match msg {
                         Message::Ping { id: other_id } => {
                             self.send(addr, Message::Pong { id: self.peer_id });

@@ -206,7 +206,7 @@ impl WorkerSim {
                 }
             }
             // Don't hog CPU... too much.
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
     fn quit(mut self) {

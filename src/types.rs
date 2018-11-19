@@ -176,6 +176,7 @@ impl PeerMap {
     pub fn insert(&mut self, self_id: PeerId, address: SocketAddr, peer_id: PeerId) {
         let new_peer = ContactInfo { peer_id, address };
         let distance_rank = self_id.distance_rank(peer_id);
+        debug!("Inserting peer {:?} at distance {}", peer_id, distance_rank);
         self.buckets[distance_rank as usize].insert(new_peer);
     }
 
@@ -188,8 +189,8 @@ impl PeerMap {
         let mut search_results = vec![];
         search_results.extend(self.buckets[search_bucket].known_peers.iter());
         while search_results.len() < self.bucket_size && search_width < Blake2Hash::max_power() {
-            trace!("searching width {} from {}", search_width, search_bucket);
-            trace!("search_results: {:?}", search_results);
+            // trace!("searching width {} from {}", search_width, search_bucket);
+            // trace!("search_results: {:?}", search_results);
             let target_behind = search_bucket.saturating_sub(search_width);
             // This one heckin' better not overflow.
             let target_ahead = search_bucket + search_width;
