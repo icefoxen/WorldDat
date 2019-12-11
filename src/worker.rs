@@ -6,7 +6,6 @@ use std::net::SocketAddr;
 use std::sync::mpsc;
 use std::thread;
 
-use failure::{format_err, Error};
 use log::*;
 
 use crate::types::*;
@@ -16,7 +15,7 @@ use crate::types::*;
 ///
 /// Obviates the need to have multiple channels.
 #[derive(Debug, Clone)]
-enum WorkerMessage {
+pub enum WorkerMessage {
     /// Stop the worker thread.
     Quit,
     // /// Wake up and check to see if there's anything that needs doing.
@@ -42,11 +41,10 @@ impl WorkerHandle {
     ///
     /// Returns Err if the thread didn't exist or if
     /// there was some problem joining to it.
-    pub fn quit(self) -> Result<(), Error> {
+    pub fn quit(self) -> Result<(), std::sync::mpsc::SendError<WorkerMessage>> {
         self.control_sender.send(WorkerMessage::Quit)?;
-        self.thread_handle
-            .join()
-            .map_err(|e| format_err!("Error joining worker thread: {:?}", e))?;
+        self.thread_handle.join().expect("TODO");
+        //.map_err(|e| format_err!("Error joining worker thread: {:?}", e))?;
         Ok(())
     }
 
@@ -81,10 +79,13 @@ pub struct WorkerMessageHandle {
 
 impl WorkerMessageHandle {
     /// Tell the worker thread a message has been recieved from the given source
-    pub fn message(&self, source: SocketAddr, message: Message) -> Result<(), Error> {
+    pub fn message(
+        &self,
+        source: SocketAddr,
+        message: Message,
+    ) -> Result<(), std::sync::mpsc::SendError<WorkerMessage>> {
         self.control_sender
             .send(WorkerMessage::Incoming(source, message))
-            .map_err(|e| format_err!("FIXME {:?}", e))
     }
 }
 

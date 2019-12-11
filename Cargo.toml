@@ -5,27 +5,24 @@ authors = ["Simon Heath <icefoxen@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-quinn = "0.1"
-# quinn = {git = "https://github.com/djc/quinn.git", features = ["dangerous_configuration"]}
-#quinn = {path = "/home/icefox/src/quinn/quinn", features = ["dangerous_configuration"]}
-tokio = "0.1"
-tokio-io = "0.1"
-failure = "0.1"
-futures = "0.1"
-structopt = "0.3"
+# Core stuff
+quinn = "0.5"
+tokio = {version = "0.2", features = ["rt-core", "rt-threaded", "time"]}
 url = "2"
-log = "0.4"
-pretty_env_logger = "0.3"
-chrono = "0.4"
-lazy_static = "1"
-rustls = { version = "0.14", features = ["quic"] }
 blake2 = "0.8"
-bytes = "0.4"
 base64 = "0.11"
-oorandom = "11"
 bytemuck = "1"
+log = "0.4"
 
+# Serde stuff
 serde = "1"
 serde_derive = "1"
 rmp = "0.8"
-rmp-serde = "0.13"
+rmp-serde = "0.14"
+
+# Utility stuff
+structopt = "0.3"
+pretty_env_logger = "0.3"
+chrono = "0.4"
+lazy_static = "1"
+oorandom = "11"
