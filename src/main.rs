@@ -6,6 +6,7 @@ use lazy_static::*;
 
 use structopt::StructOpt;
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -24,6 +25,7 @@ fn setup_logging() {
     pretty_env_logger::init();
 }
 
+/// Command line options for a peer node.
 #[derive(StructOpt, Debug, Clone)]
 pub struct PeerOpt {
     /// Initial node to connect to, if any.
@@ -56,7 +58,7 @@ pub struct PeerOpt {
     logproto: bool,
 }
 
-use std::collections::HashMap;
+/// Simulate many workers together?
 struct WorkerSim {
     workers: HashMap<SocketAddr, worker::WorkerHandle>,
     bootstrap: Option<SocketAddr>,
@@ -68,6 +70,8 @@ struct WorkerSim {
     /// The `run()` method sorts the vec by duration, in reverse, so we just
     /// pop the workers we need off the end.
     worker_add_queue: Vec<(SocketAddr, worker::WorkerHandle, Duration)>,
+
+    rng: oorandom::Rand64,
 }
 
 impl WorkerSim {
@@ -76,6 +80,7 @@ impl WorkerSim {
             workers: HashMap::new(),
             bootstrap: None,
             worker_add_queue: Vec::new(),
+            rng: oorandom::Rand64::new(12345),
         }
     }
 
@@ -94,7 +99,7 @@ impl WorkerSim {
     /// If we have a bootstrap address, the worker will send a message to it trying to look
     /// up its own address to get some nearby peers.
     fn add_new_worker(&mut self, addr: &str, delay: Duration) {
-        let w_id = types::PeerId::new_insecure_random();
+        let w_id = types::PeerId::new_insecure_random(&mut self.rng);
         let w_addr = addr.parse().unwrap();
         let w = worker::WorkerState::start(w_id, w_addr);
         if let Some(bootstrap) = self.bootstrap {

@@ -130,7 +130,7 @@ impl Blake2Hash {
 
     /// The maximum power of 2 that the hash can hold.
     /// In this case, 512 for Blake2b.
-    pub fn max_power() -> usize {
+    pub const fn max_power() -> usize {
         BLAKE2_HASH_SIZE * 8
     }
 
@@ -167,7 +167,7 @@ mod tests {
     fn test_leading_zeroes() {
         let bytes = [0; BLAKE2_HASH_SIZE];
         let x = Blake2Hash::new_raw(&bytes[..]);
-        assert_eq!(x.leading_zeros(), Blake2Hash::max_power() as u32);
+        assert_eq!(x.leading_zeros(), Blake2Hash::max_power() as u32 - 1);
 
         let bytes = [
             0x00, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -177,7 +177,7 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
         let x = Blake2Hash::new_raw(&bytes[..]);
-        assert_eq!(x.leading_zeros(), 8);
+        assert_eq!(x.leading_zeros(), 7);
 
         let bytes = [
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -187,7 +187,7 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF,
         ];
         let x = Blake2Hash::new_raw(&bytes[..]);
-        assert_eq!(x.leading_zeros(), 504);
+        assert_eq!(x.leading_zeros(), 503);
 
         let bytes = [
             0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -197,6 +197,6 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
         let x = Blake2Hash::new_raw(&bytes[..]);
-        assert_eq!(x.leading_zeros(), 23);
+        assert_eq!(x.leading_zeros(), 22);
     }
 }
