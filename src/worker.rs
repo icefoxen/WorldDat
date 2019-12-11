@@ -6,7 +6,8 @@ use std::net::SocketAddr;
 use std::sync::mpsc;
 use std::thread;
 
-use failure::Error;
+use failure::{format_err, Error};
+use log::*;
 
 use crate::types::*;
 

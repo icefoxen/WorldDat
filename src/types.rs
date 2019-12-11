@@ -1,6 +1,8 @@
 //! Useful types used throughout the program, I suppose.
 
-use hash::Blake2Hash;
+use crate::hash::Blake2Hash;
+use log::*;
+use serde_derive::*;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -19,10 +21,14 @@ impl PeerId {
     /// Creates a new `PeerId` from an UNSECURE pRNG keykey.
     /// Useful for testing only!
     pub fn new_insecure_random() -> PeerId {
-        use rand::{self, Rng};
-        let v = &mut vec![0; 64];
-        rand::thread_rng().fill(v.as_mut_slice());
-        PeerId(Blake2Hash::new(v))
+        use oorandom::Rand64;
+        let mut r = Rand64::new(12345);
+        // Blake2 hash needs 64 bytes, or 8 u64's
+        // See https://github.com/Lokathor/bytemuck/issues/11
+        let mut data = [0u64; 8];
+        &data[..].iter_mut().for_each(|v| *v = r.rand_u64());
+        let data_bytes = bytemuck::bytes_of(&data);
+        PeerId(Blake2Hash::new(data_bytes))
     }
 
     pub fn to_base64(&self) -> String {

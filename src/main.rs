@@ -1,44 +1,14 @@
-extern crate quinn;
-extern crate tokio;
-extern crate tokio_io;
-#[macro_use]
-extern crate failure;
-extern crate futures;
-extern crate structopt;
-extern crate url;
-
-// #[macro_use(slog_o)]
-extern crate slog;
-extern crate slog_async;
-extern crate slog_scope;
-extern crate slog_stdlog;
-extern crate slog_term;
-
-extern crate blake2;
-extern crate bytes;
-extern crate chrono;
-#[macro_use]
-extern crate log;
-extern crate fern;
-extern crate rmp;
-extern crate rmp_serde;
-extern crate rustls;
-extern crate serde;
-#[macro_use]
-extern crate serde_derive;
+use log::*;
+use structopt;
 // lazy_static used in unit tests
 #[allow(unused_imports)]
-#[macro_use]
-extern crate lazy_static;
-extern crate base64;
-extern crate rand;
+use lazy_static::*;
 
 use structopt::StructOpt;
 
-use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::time::{self, Duration, Instant};
+use std::time::{Duration, Instant};
 
 // mod connection_tests;
 mod hash;
@@ -51,33 +21,7 @@ mod worker;
 // mod tests;
 
 fn setup_logging() {
-    use fern::colors::{Color, ColoredLevelConfig};
-    let colors = ColoredLevelConfig::default()
-        .info(Color::Green)
-        .debug(Color::BrightMagenta)
-        .trace(Color::BrightBlue);
-    // This sets up a `fern` logger and initializes `log`.
-    fern::Dispatch::new()
-        // Formats logs
-        .format(move |out, message, record| {
-            out.finish(format_args!(
-                "[{}][{:<5}][{}] {}",
-                chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
-                // BUGGO TODO: The coloring breaks the justification...
-                // Probably 'cause the control characters mess with the
-                // character count.  :|
-                colors.color(record.level()),
-                record.target(),
-                message
-            ))
-        }).level(log::LevelFilter::Trace)
-        .level_for("tokio_reactor", log::LevelFilter::Warn)
-        .level_for("mio", log::LevelFilter::Warn)
-        .level_for("rustls", log::LevelFilter::Warn)
-        // Hooks up console output.
-        .chain(std::io::stdout())
-        .apply()
-        .expect("Could not init logging!");
+    pretty_env_logger::init();
 }
 
 #[derive(StructOpt, Debug, Clone)]

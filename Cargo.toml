@@ -2,35 +2,30 @@
 name = "worlddat"
 version = "0.1.0"
 authors = ["Simon Heath <icefoxen@gmail.com>"]
+edition = "2018"
 
 [dependencies]
-#quinn = "0.1"
+quinn = "0.1"
 # quinn = {git = "https://github.com/djc/quinn.git", features = ["dangerous_configuration"]}
-quinn = {path = "/home/icefox/src/quinn/quinn", features = ["dangerous_configuration"]}
+#quinn = {path = "/home/icefox/src/quinn/quinn", features = ["dangerous_configuration"]}
 tokio = "0.1"
 tokio-io = "0.1"
 failure = "0.1"
 futures = "0.1"
-structopt = "0.2"
-url = "1"
+structopt = "0.3"
+url = "2"
 log = "0.4"
-fern = { version = "0.5", features = ["colored"] }
+pretty_env_logger = "0.3"
 chrono = "0.4"
 lazy_static = "1"
 rustls = { version = "0.14", features = ["quic"] }
 blake2 = "0.8"
 bytes = "0.4"
-rand = "0.6"
-base64 = "0.10"
+base64 = "0.11"
+oorandom = "11"
+bytemuck = "1"
 
 serde = "1"
 serde_derive = "1"
 rmp = "0.8"
 rmp-serde = "0.13"
-
-slog = { version = "2", features = ["max_level_trace"] }
-slog-term = "2"
-slog-async = "2"
-slog-scope = "4"
-slog-stdlog = "3"
-
