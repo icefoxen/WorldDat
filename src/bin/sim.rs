@@ -1,10 +1,8 @@
 /// Run with
-/// cargo run --example server -- . --listen '[::1]:9999'
+/// env RUST_LOG=trace cargo run --bin sim
 use log::*;
 use structopt;
-// lazy_static used in unit tests
-#[allow(unused_imports)]
-use lazy_static::*;
+use worlddat::*;
 
 use structopt::StructOpt;
 
@@ -12,20 +10,6 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
-
-// mod connection_tests;
-mod hash;
-// mod peer;
-// mod peer2;
-mod types;
-mod worker;
-
-// #[cfg(test)]
-// mod tests;
-
-fn setup_logging() {
-    pretty_env_logger::init();
-}
 
 /// Command line options for a peer node.
 #[derive(StructOpt, Debug, Clone)]
@@ -182,7 +166,7 @@ fn heckin_simulator() {
 }
 
 fn main() {
-    setup_logging();
+    pretty_env_logger::init();
     // let opt = PeerOpt::from_args();
     heckin_simulator();
     // let peer = peer2::Peer::new(opt).expect("Could not create peer struct?");
