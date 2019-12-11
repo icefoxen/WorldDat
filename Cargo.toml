@@ -4,6 +4,8 @@ version = "0.1.0"
 authors = ["Simon Heath <icefoxen@gmail.com>"]
 edition = "2018"
 
+
+
 [dependencies]
 # Core stuff
 quinn = "0.5"
@@ -14,7 +16,11 @@ base64 = "0.11"
 bytemuck = "1"
 log = "0.4"
 futures = "0.3"
-
+# Must be same version that quinn uses
+rustls = {version= "0.16", features = ["dangerous_configuration"]}
+# Must be same version that rustls uses
+webpki = "0.21"
+rcgen = "0.7"
 
 # Serde stuff
 serde = "1"

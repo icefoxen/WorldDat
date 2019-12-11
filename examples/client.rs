@@ -1,19 +1,18 @@
 /// Run with:
 /// cargo run --example client -- 'http://localhost:9999/Cargo.toml'
-
 use std::{
     fs,
     io::{self, Write},
     net::ToSocketAddrs,
     path::PathBuf,
-    time::{Instant},
+    time::Instant,
 };
 
 use anyhow::{anyhow, Result};
 use futures::TryFutureExt;
+use log::{error, info};
 use structopt::StructOpt;
 use tokio::runtime::Builder;
-use log::{error, info};
 use url::Url;
 
 /// HTTP/0.9 over QUIC client
@@ -41,14 +40,14 @@ struct Opt {
 
 fn main() {
     pretty_env_logger::init();
-/*
-    tracing::subscriber::set_global_default(
-        tracing_subscriber::FmtSubscriber::builder()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .finish(),
-    )
-    .unwrap();
-*/
+    /*
+        tracing::subscriber::set_global_default(
+            tracing_subscriber::FmtSubscriber::builder()
+                .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+                .finish(),
+        )
+        .unwrap();
+    */
     let opt = Opt::from_args();
     let code = {
         if let Err(e) = run(opt) {

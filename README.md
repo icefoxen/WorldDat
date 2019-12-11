@@ -99,3 +99,11 @@ interoperates with existing systems instead of replacing them.
  * [Kademila paper](http://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf)
  * [S/Kademila](http://www.spovnet.de/files/publications/SKademlia2007.pdf)
  * Coral DSHT?
+
+
+## Related art
+
+ * <https://christine.website/blog/wasmcloud-progress-2019-12-08> -- Uses
+   ipfs as wasm module storage
+ * <https://tech.fpcomplete.com/blog/casa> -- Content-addressed network
+   for Haskell packages

@@ -8,9 +8,9 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use futures::{StreamExt, TryFutureExt};
+use log::{error, info};
 use structopt::{self, StructOpt};
 use tokio::runtime::Builder;
-use log::{error, info};
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "server")]
@@ -183,7 +183,7 @@ async fn handle_connection(root: Arc<Path>, conn: quinn::Connecting) -> Result<(
             };
             tokio::spawn(
                 handle_request(root.clone(), stream)
-                    .unwrap_or_else(move |e| error!("failed: {reason}", reason = e.to_string()))
+                    .unwrap_or_else(move |e| error!("failed: {reason}", reason = e.to_string())),
             );
         }
         Ok(())
