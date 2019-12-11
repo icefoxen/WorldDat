@@ -93,7 +93,6 @@ impl serde::Serialize for Blake2Hash {
     where
         S: serde::Serializer,
     {
-        // self.0[..].serialize_bytes(serializer)
         serializer.serialize_bytes(&self.0[..])
     }
 }

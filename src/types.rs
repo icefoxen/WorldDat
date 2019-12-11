@@ -1,6 +1,6 @@
 //! Useful types used throughout the program, I suppose.
 
-use crate::hash::Blake2Hash;
+use crate::hash::{Blake2Hash, BLAKE2_HASH_SIZE};
 use log::*;
 use serde_derive::*;
 use std::cmp::Ordering;
@@ -23,7 +23,7 @@ impl PeerId {
     pub fn new_insecure_random(rng: &mut oorandom::Rand64) -> PeerId {
         // Blake2 hash needs 64 bytes, or 8 u64's
         // See https://github.com/Lokathor/bytemuck/issues/11
-        let mut data = [0u64; 8];
+        let mut data = [0u64; BLAKE2_HASH_SIZE];
         data[..].iter_mut().for_each(|v| *v = rng.rand_u64());
         let data_bytes = bytemuck::bytes_of(&data);
         PeerId(Blake2Hash::new(data_bytes))

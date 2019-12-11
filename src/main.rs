@@ -1,3 +1,5 @@
+/// Run with
+/// cargo run --example server -- . --listen '[::1]:9999'
 use log::*;
 use structopt;
 // lazy_static used in unit tests
