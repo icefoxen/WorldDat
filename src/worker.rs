@@ -120,13 +120,12 @@ impl WorkerState {
             peer_map,
         };
         let thread_handle = thread::spawn(|| state.run());
-        let handle = WorkerHandle {
+        WorkerHandle {
             message_receiver,
             control_sender,
             thread_handle,
             peer_id,
-        };
-        handle
+        }
     }
 
     pub fn send(&self, dest: SocketAddr, msg: Message) {
@@ -188,7 +187,7 @@ impl WorkerState {
                                 },
                                 Err(neighbors) => Message::FindPeerResponsePeerNotFound {
                                     id: desired_id,
-                                    neighbors: neighbors,
+                                    neighbors,
                                 },
                             };
                             self.send(addr, reply)

@@ -26,7 +26,7 @@ impl PeerId {
         // Blake2 hash needs 64 bytes, or 8 u64's
         // See https://github.com/Lokathor/bytemuck/issues/11
         let mut data = [0u64; 8];
-        &data[..].iter_mut().for_each(|v| *v = r.rand_u64());
+        data[..].iter_mut().for_each(|v| *v = r.rand_u64());
         let data_bytes = bytemuck::bytes_of(&data);
         PeerId(Blake2Hash::new(data_bytes))
     }

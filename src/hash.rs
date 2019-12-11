@@ -60,8 +60,9 @@ impl ops::BitXor for Blake2Hash {
     fn bitxor(self, rhs: Self) -> Self {
         // We could probably optimize this but heck it.
         let mut out = [0; BLAKE2_HASH_SIZE];
-        for i in 0..self.0.len() {
-            out[i] = self.0[i] ^ rhs.0[i];
+        //for i in 0..self.0.len() {
+        for (i, item) in out.iter_mut().enumerate().take(self.0.len()) {
+            *item = self.0[i] ^ rhs.0[i];
         }
         Blake2Hash(out)
     }
