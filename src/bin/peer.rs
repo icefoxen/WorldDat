@@ -78,7 +78,6 @@ mod server {
 
     use futures::{StreamExt, TryFutureExt};
     use log::*;
-    use tokio::runtime::Runtime;
 
     use quinn::{
         Certificate, CertificateChain, Endpoint, EndpointDriver, Incoming, PrivateKey,
@@ -229,14 +228,13 @@ mod server {
 
     /// Runs a QUIC server bound to given address.
     pub fn run_server<A: ToSocketAddrs>(
-        runtime: &mut Runtime,
         addr: A,
     ) -> Result<(), Box<dyn Error>> {
-        let (driver, mut incoming, _server_cert) = runtime.enter(|| make_server_endpoint(addr))?;
+        let (driver, mut incoming, _server_cert) = make_server_endpoint(addr)?;
         // drive UDP socket
-        runtime.spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
+        tokio::spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
         // accept a single connection
-        runtime.spawn(async move {
+        tokio::spawn(async move {
             let incoming_conn = incoming.next().await.unwrap();
             info!("Connection incoming");
             //let new_conn = incoming_conn.await.unwrap();
@@ -271,7 +269,7 @@ mod client {
 
     use futures::TryFutureExt;
     use log::*;
-    use tokio::{runtime::Runtime, task::JoinHandle};
+    use tokio::{task::JoinHandle};
 
     use quinn::{ClientConfig, ClientConfigBuilder, Endpoint};
     /// Dummy certificate verifier that treats any certificate as valid.
@@ -306,21 +304,20 @@ mod client {
         cfg
     }
 
-    pub fn run_client(runtime: &mut Runtime, server_port: u16) -> Result<JoinHandle<()>, ()> {
+    pub fn run_client(server_port: u16) -> Result<JoinHandle<()>, ()> {
         let client_cfg = configure_client();
         let mut endpoint_builder = Endpoint::builder();
         endpoint_builder.default_client_config(client_cfg);
 
-        let (driver, endpoint, _) = runtime
-            .enter(|| endpoint_builder.bind(&"0.0.0.0:0".parse().unwrap()))
+        let (driver, endpoint, _) =
+            endpoint_builder.bind(&"0.0.0.0:0".parse().unwrap())
             .expect("Could not build client endpoint; is the port already used or something?");
-        runtime
-            .spawn(driver.unwrap_or_else(|e| error!("Probably fatal IO error in client: {}", e)));
+        tokio::spawn(driver.unwrap_or_else(|e| error!("Probably fatal IO error in client: {}", e)));
 
         let server_addr =
             SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), server_port));
         // connect to server
-        let handle = runtime.spawn(async move {
+        let handle = tokio::spawn(async move {
             let quinn::NewConnection {
                 driver, connection, ..
             } = endpoint
@@ -329,8 +326,6 @@ mod client {
                 .unwrap()
                 .await
                 .unwrap();
-            // Trying to use the Runtime explicitly here causes
-            // a double-borrow.
             tokio::spawn(driver);
             info!(
                 "connected: id={}, addr={}",
@@ -388,8 +383,10 @@ fn main() -> Result<(), ()> {
         .build()
         .expect("Could not build runtime");
 
-    server::run_server(&mut runtime, ("0.0.0.0", SERVER_PORT)).expect("Could not run server");
-    let handle = client::run_client(&mut runtime, SERVER_PORT).expect("Could not run client");
+    let handle = runtime.enter(|| {
+        server::run_server(("0.0.0.0", SERVER_PORT)).expect("Could not run server");
+        client::run_client(SERVER_PORT).expect("Could not run client")
+    });
 
     runtime
         .block_on(handle)
