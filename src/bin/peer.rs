@@ -16,11 +16,9 @@ use structopt::StructOpt;
 
 use tokio::runtime::Builder;
 
-const SERVER_PORT: u16 = 5000;
-
 /// Command line options for a peer node.
 #[derive(StructOpt, Debug, Clone)]
-pub struct PeerOpt {
+struct Opt {
     /// Initial node to connect to, if any.
     #[structopt(short = "b", long = "bootstrap")]
     bootstrap_peer: Option<SocketAddr>,
@@ -78,6 +76,7 @@ mod server {
 
     use futures::{StreamExt, TryFutureExt};
     use log::*;
+    use tokio::task::JoinHandle;
 
     use quinn::{
         Certificate, CertificateChain, Endpoint, EndpointDriver, Incoming, PrivateKey,
@@ -148,31 +147,6 @@ mod server {
             .await
             .map_err(|e| error!("failed to shutdown stream: {}", e))?;
         info!("complete");
-        /*
-            let mut escaped = String::new();
-            for &x in &req[..] {
-                let part = ascii::escape_default(x).collect::<Vec<_>>();
-                escaped.push_str(str::from_utf8(&part).unwrap());
-            }
-            info!(content = %escaped);
-            // Execute the request
-            let resp = process_get(&root, &req).unwrap_or_else(|e| {
-                error!("failed: {}", e);
-                format!("failed to process request: {}\n", e)
-                    .into_bytes()
-                    .into()
-            });
-            // Write the response
-            send.write_all(&resp)
-                .await
-                .map_err(|e| anyhow!("failed to send response: {}", e))?;
-            // Gracefully terminate the stream
-            send.finish()
-                .await
-                .map_err(|e| anyhow!("failed to shutdown stream: {}", e))?;
-            info!("complete");
-            Ok(())
-        */
         Ok(())
     }
 
@@ -193,9 +167,7 @@ mod server {
             connection.remote_address()
         );
 
-        // TODO: What is this for?
-        // Example says "drive UDP socket"
-        // Ah, I think this is the part that handles the low-level UDP stuff
+        // This is the part that handles the low-level UDP stuff
         // and passes it to/from the quinn state machine
         tokio::spawn(driver.unwrap_or_else(|e| error!("UDP I/O error: {}", e)));
         async move {
@@ -227,49 +199,29 @@ mod server {
     }
 
     /// Runs a QUIC server bound to given address.
-    pub fn run_server<A: ToSocketAddrs>(
-        addr: A,
-    ) -> Result<(), Box<dyn Error>> {
-        let (driver, mut incoming, _server_cert) = make_server_endpoint(addr)?;
+    pub fn run_server<A: ToSocketAddrs>(addr: A) -> JoinHandle<Result<(), Box<dyn Error + Send>>> {
+        let (driver, mut incoming, _server_cert) = make_server_endpoint(addr).expect("TODO");
         // drive UDP socket
         tokio::spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
         // accept a single connection
         tokio::spawn(async move {
             let incoming_conn = incoming.next().await.unwrap();
             info!("Connection incoming");
-            //let new_conn = incoming_conn.await.unwrap();
-            /*
-            println!(
-                "connection accepted: id={} addr={}",
-                new_conn.connection.remote_id(),
-                new_conn.connection.remote_address()
-            );
-            */
             tokio::spawn(
                 handle_connection(incoming_conn)
                     .unwrap_or_else(|_| error!("Connection handling failed")),
             );
-
-            // Drive the connection to completion
-            /*
-            if let Err(e) = new_conn.driver.await {
-                println!("connection lost: {}", e);
-            }
-            */
-        });
-        Ok(())
+            Ok(())
+        })
     }
 }
 
 mod client {
-    use std::{
-        net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-        sync::Arc,
-    };
+    use std::{net::SocketAddr, sync::Arc};
 
     use futures::TryFutureExt;
     use log::*;
-    use tokio::{task::JoinHandle};
+    use tokio::task::JoinHandle;
 
     use quinn::{ClientConfig, ClientConfigBuilder, Endpoint};
     /// Dummy certificate verifier that treats any certificate as valid.
@@ -304,18 +256,18 @@ mod client {
         cfg
     }
 
-    pub fn run_client(server_port: u16) -> Result<JoinHandle<()>, ()> {
+    pub fn run_client(server_addr: SocketAddr) -> Result<JoinHandle<()>, ()> {
         let client_cfg = configure_client();
         let mut endpoint_builder = Endpoint::builder();
         endpoint_builder.default_client_config(client_cfg);
 
-        let (driver, endpoint, _) =
-            endpoint_builder.bind(&"0.0.0.0:0".parse().unwrap())
+        let (driver, endpoint, _) = endpoint_builder
+            .bind(&"[::]:0".parse().unwrap())
             .expect("Could not build client endpoint; is the port already used or something?");
         tokio::spawn(driver.unwrap_or_else(|e| error!("Probably fatal IO error in client: {}", e)));
 
-        let server_addr =
-            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), server_port));
+        let server_addr: SocketAddr = "[::1]:4433".parse().unwrap();
+        dbg!(&server_addr);
         // connect to server
         let handle = tokio::spawn(async move {
             let quinn::NewConnection {
@@ -373,6 +325,7 @@ mod client {
 }
 
 fn main() -> Result<(), ()> {
+    let opt = Opt::from_args();
     pretty_env_logger::init();
     // server and client are running on the same thread asynchronously
     // To use a thread pool switch basic_scheduler() for threaded_scheduler()
@@ -383,13 +336,17 @@ fn main() -> Result<(), ()> {
         .build()
         .expect("Could not build runtime");
 
+    dbg!(&opt);
     let handle = runtime.enter(|| {
-        server::run_server(("0.0.0.0", SERVER_PORT)).expect("Could not run server");
-        client::run_client(SERVER_PORT).expect("Could not run client")
+        let addr = opt.listen;
+        let bootstrap_addr = opt.bootstrap_peer.unwrap_or("[::1]:4433".parse().unwrap());
+        client::run_client(bootstrap_addr).expect("Could not run client");
+        server::run_server(addr)
     });
 
     runtime
         .block_on(handle)
-        .expect("Runtime errored while waiting for service to finish");
+        .expect("Runtime errored while waiting for service to finish")
+        .expect("Server returned error?");
     Ok(())
 }
