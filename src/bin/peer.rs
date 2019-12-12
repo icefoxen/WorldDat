@@ -30,6 +30,11 @@ pub struct PeerOpt {
     /// a fetch-only peer sometime.
     #[structopt(short = "l", long = "listen", default_value = "[::]:4433")]
     listen: SocketAddr,
+
+    /// Number of threads to spawn.  Defaults to the
+    /// number of CPU's on the machine.
+    #[structopt(short = "t", long = "t")]
+    num_threads: Option<u16>,
     /* TODO: Accept these instead of always making a self-signed cert
     /// Certificate authority key, if any.
     #[structopt(parse(from_os_str), long = "ca")]
@@ -194,8 +199,8 @@ mod server {
         // Ah, I think this is the part that handles the low-level UDP stuff
         // and passes it to/from the quinn state machine
         tokio::spawn(driver.unwrap_or_else(|e| error!("UDP I/O error: {}", e)));
-        info!("UDP driver spawned");
-        async {
+        async move {
+            info!("Connection established");
             // Client can open multiple streams, each a new request.
             while let Some(stream) = bi_streams.next().await {
                 info!("Handling stream");
@@ -374,8 +379,10 @@ mod client {
 fn main() -> Result<(), ()> {
     pretty_env_logger::init();
     // server and client are running on the same thread asynchronously
+    // To use a thread pool switch basic_scheduler() for threaded_scheduler()
     let mut runtime = Builder::new()
         .basic_scheduler()
+        .thread_name("peer-io-worker")
         .enable_all()
         .build()
         .expect("Could not build runtime");
