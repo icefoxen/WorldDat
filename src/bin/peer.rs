@@ -329,6 +329,9 @@ mod client {
                 .unwrap()
                 .await
                 .unwrap();
+            // Trying to use the Runtime explicitly here causes
+            // a double-borrow.
+            tokio::spawn(driver);
             info!(
                 "connected: id={}, addr={}",
                 connection.remote_id(),
@@ -368,8 +371,6 @@ mod client {
             }
             // Dropping handles allows the corresponding objects to automatically shut down
             drop((endpoint, connection));
-            // Drive the connection to completion
-            driver.await.unwrap();
         });
 
         Ok(handle)
