@@ -77,7 +77,7 @@ where
 }
 
 mod server {
-    use std::{error::Error, sync::Arc, net::SocketAddr};
+    use std::{error::Error, net::SocketAddr, sync::Arc};
 
     use futures::{StreamExt, TryFutureExt};
     use log::*;
@@ -126,8 +126,7 @@ mod server {
         let mut endpoint_builder = Endpoint::builder();
         endpoint_builder.listen(server_config);
         info!("Listening on address {}", bind_addr);
-        let (driver, _endpoint, incoming) =
-            endpoint_builder.bind(&bind_addr)?;
+        let (driver, _endpoint, incoming) = endpoint_builder.bind(&bind_addr)?;
         Ok((driver, incoming, server_cert))
     }
 
@@ -208,22 +207,26 @@ mod server {
     pub fn run_server(addr: SocketAddr) -> JoinHandle<()> {
         let (driver, mut incoming, _server_cert) = make_server_endpoint(addr).expect("TODO");
         // drive UDP socket
-        tokio::spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
-        // accept a single connection
+        let endpoint_driver = tokio::spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
+        // accept incoming connections forever.
         tokio::spawn(async move {
-            let incoming_conn = incoming.next().await.unwrap();
-            info!("Connection incoming");
-            tokio::spawn(
-                handle_connection(incoming_conn)
-                    .unwrap_or_else(|_| error!("Connection handling failed")),
-            );
-        })
+            // `incoming` is not actually an iterator, so, we do
+            // while instead of for
+            while let Some(incoming_conn) = incoming.next().await {
+                info!("Connection incoming");
+                tokio::spawn(
+                    handle_connection(incoming_conn)
+                        .unwrap_or_else(|_| error!("Connection handling failed")),
+                );
+            }
+        });
+        endpoint_driver
     }
 }
 
 mod client {
     use std::{
-        net::{SocketAddr, Ipv6Addr},
+        net::{Ipv6Addr, SocketAddr},
         sync::Arc,
     };
 
@@ -264,18 +267,16 @@ mod client {
         cfg
     }
 
-    pub fn run_client(server_addr: SocketAddr,
-        ) -> Result<JoinHandle<()>, ()> {
+    pub fn run_client(server_addr: SocketAddr, message: Box<[u8]>) -> Result<JoinHandle<()>, ()> {
         let client_cfg = configure_client();
         let mut endpoint_builder = Endpoint::builder();
         endpoint_builder.default_client_config(client_cfg);
 
-        let (driver, endpoint, _) =
-            endpoint_builder.bind(&SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)))
+        let (driver, endpoint, _) = endpoint_builder
+            .bind(&SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)))
             .expect("Could not build client endpoint; is the port already used or something?");
         tokio::spawn(driver.unwrap_or_else(|e| error!("Probably fatal IO error in client: {}", e)));
 
-        //let server_addr = server_addr.to_socket_addrs().expect("Invalid socket addr for client?").next().unwrap();
         // connect to server
         let handle = tokio::spawn(async move {
             let quinn::NewConnection {
@@ -301,7 +302,7 @@ mod client {
             {
                 info!("Streams opened");
 
-                send.write_all(b"RAWR!")
+                send.write_all(&*message)
                     .await
                     .map_err(|e| info!("failed to send request: {}", e))
                     .expect("TODO");
@@ -346,12 +347,17 @@ fn main() -> Result<(), ()> {
         .expect("Could not build runtime");
 
     let handle = runtime.enter(|| {
-        server::run_server(opt.listen);
-        client::run_client(opt.bootstrap_peer).expect("Could not run client")
+        for i in 0..10 {
+            let msg = format!("This is client {}", i);
+            let msg_bytes = msg.into_boxed_str().into_boxed_bytes();
+            tokio::spawn(client::run_client(opt.bootstrap_peer, msg_bytes).expect("Could not run client"));
+        }
+        tokio::spawn(server::run_server(opt.listen))
     });
 
     runtime
         .block_on(handle)
-        .expect("Runtime errored while waiting for service to finish");
+        .expect("Runtime errored while waiting for service to finish")
+        .expect("???");
     Ok(())
 }
