@@ -16,11 +16,9 @@ use structopt::StructOpt;
 
 use tokio::runtime::Builder;
 
-const SERVER_PORT: u16 = 5000;
-
 /// Command line options for a peer node.
 #[derive(StructOpt, Debug, Clone)]
-pub struct PeerOpt {
+pub struct Opt {
     /// Initial node to connect to, if any.
     #[structopt(short = "b", long = "bootstrap")]
     bootstrap_peer: Option<SocketAddr>,
@@ -35,7 +33,7 @@ pub struct PeerOpt {
     /// number of CPU's on the machine.
     #[structopt(short = "t", long = "t")]
     num_threads: Option<u16>,
-    /* TODO: Accept these instead of always making a self-signed cert
+    /* TODO: Accept these instead of always making a (new) self-signed cert
     /// Certificate authority key, if any.
     #[structopt(parse(from_os_str), long = "ca")]
     ca: Option<PathBuf>,
@@ -50,7 +48,12 @@ pub struct PeerOpt {
 }
 
 trait ResultExt<T, E> {
-    /// This is TOTALLY NECESSARY.  Honest.
+    /// Lets you pass a thunk that does a THING to an Err
+    /// without mutating it.  Mainly for logging.
+    ///
+    /// This is TOTALLY NECESSARY and not overkill at all.
+    /// Honest.
+    ///
     /// Also see the `tap` crate.
     fn inspect_err<F>(self, f: F) -> Self
     where
@@ -148,31 +151,6 @@ mod server {
             .await
             .map_err(|e| error!("failed to shutdown stream: {}", e))?;
         info!("complete");
-        /*
-            let mut escaped = String::new();
-            for &x in &req[..] {
-                let part = ascii::escape_default(x).collect::<Vec<_>>();
-                escaped.push_str(str::from_utf8(&part).unwrap());
-            }
-            info!(content = %escaped);
-            // Execute the request
-            let resp = process_get(&root, &req).unwrap_or_else(|e| {
-                error!("failed: {}", e);
-                format!("failed to process request: {}\n", e)
-                    .into_bytes()
-                    .into()
-            });
-            // Write the response
-            send.write_all(&resp)
-                .await
-                .map_err(|e| anyhow!("failed to send response: {}", e))?;
-            // Gracefully terminate the stream
-            send.finish()
-                .await
-                .map_err(|e| anyhow!("failed to shutdown stream: {}", e))?;
-            info!("complete");
-            Ok(())
-        */
         Ok(())
     }
 
@@ -193,9 +171,7 @@ mod server {
             connection.remote_address()
         );
 
-        // TODO: What is this for?
-        // Example says "drive UDP socket"
-        // Ah, I think this is the part that handles the low-level UDP stuff
+        // This is the part that handles the low-level UDP stuff
         // and passes it to/from the quinn state machine
         tokio::spawn(driver.unwrap_or_else(|e| error!("UDP I/O error: {}", e)));
         async move {
@@ -237,25 +213,10 @@ mod server {
         tokio::spawn(async move {
             let incoming_conn = incoming.next().await.unwrap();
             info!("Connection incoming");
-            //let new_conn = incoming_conn.await.unwrap();
-            /*
-            println!(
-                "connection accepted: id={} addr={}",
-                new_conn.connection.remote_id(),
-                new_conn.connection.remote_address()
-            );
-            */
             tokio::spawn(
                 handle_connection(incoming_conn)
                     .unwrap_or_else(|_| error!("Connection handling failed")),
             );
-
-            // Drive the connection to completion
-            /*
-            if let Err(e) = new_conn.driver.await {
-                println!("connection lost: {}", e);
-            }
-            */
         });
         Ok(())
     }
@@ -263,7 +224,7 @@ mod server {
 
 mod client {
     use std::{
-        net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+        net::{Ipv4Addr, SocketAddr, ToSocketAddrs, SocketAddrV4, Ipv6Addr, SocketAddrV6},
         sync::Arc,
     };
 
@@ -304,18 +265,21 @@ mod client {
         cfg
     }
 
-    pub fn run_client(server_port: u16) -> Result<JoinHandle<()>, ()> {
+    pub fn run_client <A: ToSocketAddrs>(server_addr: A,
+        ) -> Result<JoinHandle<()>, ()> {
         let client_cfg = configure_client();
         let mut endpoint_builder = Endpoint::builder();
         endpoint_builder.default_client_config(client_cfg);
 
         let (driver, endpoint, _) =
-            endpoint_builder.bind(&"0.0.0.0:0".parse().unwrap())
+            endpoint_builder.bind(&SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)))
+            //endpoint_builder.bind(&SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)))
             .expect("Could not build client endpoint; is the port already used or something?");
         tokio::spawn(driver.unwrap_or_else(|e| error!("Probably fatal IO error in client: {}", e)));
 
-        let server_addr =
-            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), server_port));
+        let server_addr = server_addr.to_socket_addrs().expect("Invalid socket addr for client?").next().unwrap();
+        dbg!(server_addr);
+        let server_addr = SocketAddr::from((Ipv6Addr::LOCALHOST, 4433));
         // connect to server
         let handle = tokio::spawn(async move {
             let quinn::NewConnection {
@@ -383,9 +347,11 @@ fn main() -> Result<(), ()> {
         .build()
         .expect("Could not build runtime");
 
+    let opt = Opt::from_args();
+
     let handle = runtime.enter(|| {
-        server::run_server(("0.0.0.0", SERVER_PORT)).expect("Could not run server");
-        client::run_client(SERVER_PORT).expect("Could not run client")
+        server::run_server(opt.listen).expect("Could not run server");
+        client::run_client(opt.listen).expect("Could not run client")
     });
 
     runtime
