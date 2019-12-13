@@ -4,13 +4,6 @@ use serde_derive::*;
 
 use crate::types::*;
 
-/// Contact info for a peer, mapping the `PeerId` to an IP address and port.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Contact {
-    peer_id: PeerId,
-    address: SocketAddr,
-}
-
 /// The actual serializable messages that can be sent back and forth.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Message {}
