@@ -174,7 +174,7 @@ mod server {
 
         // This is the part that handles the low-level UDP stuff
         // and passes it to/from the quinn state machine
-        tokio::spawn(driver.unwrap_or_else(|e| error!("UDP I/O error: {}", e)));
+        let driver_handle = tokio::spawn(driver.unwrap_or_else(|e| error!("UDP I/O error: {}", e)));
         async move {
             info!("Connection established");
             // Client can open multiple streams, each a new request.
@@ -200,7 +200,10 @@ mod server {
             Ok(())
         }
             .await
-            .inspect_err(|e| error!("Something failed while handling streams: {:?}", e))
+            .inspect_err(|e| error!("Something failed while handling streams: {:?}", e))?;
+        driver_handle.await.expect("TODO");
+        //trace!("Connection driver done");
+        Ok(())
     }
 
     /// Runs a QUIC server bound to given address.
@@ -210,6 +213,9 @@ mod server {
         let endpoint_driver = tokio::spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
         // accept incoming connections forever.
         tokio::spawn(async move {
+            // TODO: If we want to try to shut the server down nicely
+            // on Ctrl-C, this is probably the place to do it.
+
             // `incoming` is not actually an iterator, so, we do
             // while instead of for
             while let Some(incoming_conn) = incoming.next().await {
@@ -275,10 +281,10 @@ mod client {
         let (driver, endpoint, _) = endpoint_builder
             .bind(&SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)))
             .expect("Could not build client endpoint; is the port already used or something?");
-        tokio::spawn(driver.unwrap_or_else(|e| error!("Probably fatal IO error in client: {}", e)));
+        let driver_handle = tokio::spawn(driver.unwrap_or_else(|e| error!("Probably fatal IO error in client: {}", e)));
 
         // connect to server
-        let handle = tokio::spawn(async move {
+        tokio::spawn(async move {
             let quinn::NewConnection {
                 driver, connection, ..
             } = endpoint
@@ -328,9 +334,10 @@ mod client {
             }
             // Dropping handles allows the corresponding objects to automatically shut down
             drop((endpoint, connection));
+            info!("Connections dropped");
         });
 
-        Ok(handle)
+        Ok(driver_handle)
     }
 }
 
