@@ -108,7 +108,7 @@ impl WorkerState {
     pub fn start(peer_id: PeerId, addr: SocketAddr) -> WorkerHandle {
         let (control_sender, control_receiver) = mpsc::channel();
         let (message_sender, message_receiver) = mpsc::channel();
-        let mut peer_map = PeerMap::new();
+        let mut peer_map = PeerMap::default();
         // Add self to peer map
         peer_map.insert(peer_id, addr, peer_id);
 

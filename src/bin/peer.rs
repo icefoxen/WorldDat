@@ -68,9 +68,8 @@ where
     where
         F: FnOnce(&E),
     {
-        match self {
-            Err(ref e) => f(e),
-            _ => (),
+        if let Err(ref e) = self {
+            f(e)
         }
         self
     }
@@ -176,16 +175,17 @@ mod server {
         // and passes it to/from the quinn state machine
         let driver_handle = tokio::spawn(driver.unwrap_or_else(|e| {
             let ok: quinn_proto::VarInt = 0u32.into();
-                match e {
-                    // Client hung up politely
-                    quinn::ConnectionError::ApplicationClosed {
-                        reason: quinn_proto::ApplicationClose {
-                            error_code,
-                            ..
-                        }
-                    } => if error_code != ok { error!("Application error: {}", error_code)},
-                    _ => error!("UDP I/O error: {:#?}", e)
+            match e {
+                // Client hung up politely
+                quinn::ConnectionError::ApplicationClosed {
+                    reason: quinn_proto::ApplicationClose { error_code, .. },
+                } => {
+                    if error_code != ok {
+                        error!("Application error: {}", error_code)
+                    }
                 }
+                _ => error!("UDP I/O error: {:#?}", e),
+            }
         }));
         async move {
             info!("Connection established");
@@ -293,7 +293,9 @@ mod client {
         let (driver, endpoint, _) = endpoint_builder
             .bind(&SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)))
             .expect("Could not build client endpoint; is the port already used or something?");
-        let driver_handle = tokio::spawn(driver.unwrap_or_else(|e| error!("Probably fatal IO error in client: {}", e)));
+        let driver_handle = tokio::spawn(
+            driver.unwrap_or_else(|e| error!("Probably fatal IO error in client: {}", e)),
+        );
 
         // connect to server
         tokio::spawn(async move {
@@ -341,7 +343,7 @@ mod client {
                 use std::io;
                 use std::io::Write;
                 io::stdout().write_all(&resp).unwrap();
-                io::stdout().write(b"\n").unwrap();
+                io::stdout().write_all(b"\n").unwrap();
                 io::stdout().flush().unwrap();
             }
             // Dropping handles allows the corresponding objects to automatically shut down

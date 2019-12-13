@@ -38,6 +38,5 @@ lazy_static = "1"
 oorandom = "11"
 
 [dev-dependencies]
-anyhow = "1"
 directories = "2"
 rcgen = "0.7"

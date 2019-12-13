@@ -29,7 +29,7 @@ To test:
 
 simple to use, composable, robust, swift, easy to figure out and debug and incorporate
 into other systems, quite lightweight, data is tamperproof (censorproof or monitoring-proof
-is harder), transmission encrypted by default should help tho.
+is harder), transmission encrypted by default
 
 Non-goals: permanent, anonymous, the fastest evar, does everything all on its own, replaces everything in teh world
 
@@ -37,7 +37,7 @@ Goals that are not things to worry about YET: Preventing sybil attacks/robust ke
 
 ## Notes
 
-Having data encrypted when stored on the nodes with the key contained in the lookup hash sounds very nice but also should not be the job of this layer; higher-level programs can do it.  If data is intentionally public (such as a funny cat image) then you'd need to include the key with every link you provide to it, and if you had a block but didn't know the key for it you could just heckin' google it and someone would have it written down somewhere.  Having crypto be part of a higher-level file-like abstraction is probably nicer anyway 'cause you can have the key be per file instead of per block.
+Having data encrypted when stored on the nodes with the key contained in the lookup hash (a la DAT) sounds very nice but also should not be the job of this layer; higher-level programs can do it.  If data is intentionally public (such as a funny cat image) then you'd need to include the key with every link you provide to it, and if you had a block but didn't know the key for it you could just heckin' google it and someone would have it written down somewhere.  Having crypto be part of a higher-level file-like abstraction is probably nicer anyway 'cause you can have the key be per file instead of per block.
 
 I think that this particular system will *stop* at the level of retrieving blocks, and let other systems build higher-level abstractions atop it.
 
@@ -49,8 +49,6 @@ Example of something which *can not* be stored by content-addressed merkle-dag s
 Okay, hm.  Kademila eagerly locates blocks on nodes with a similar node ID hash.  IPFS doesn't do that though.  It locates the node info of where to FIND the block on nodes with a similar ID hash.
 
 Coral does something different; it distributes things differently.  Investigate more.
-
-Possibly useful crates for bignums: `num`, `ramp`, `rug`,
 
 From the conversation here: https://www.reddit.com/r/rust/comments/9oa2n9/whats_everyone_working_on_this_week/e7tjq2a/
 
@@ -84,13 +82,13 @@ Make a more proper comparison to IPFS: fewer layers of abstraction, easier/simpl
 implementations, easier ffi for official implementation. Generally just tries to move blocks
 around instead of doing Everything. Forms a useful basis instead of a whole system,
 interoperates with existing systems instead of replacing them.
+I wonder if having two DHT's, one considered reliable and the other not, would be useful.  Similar to a bootstrap set in concept, a little.  Basically would let us optimize for the case where we have a network of always-on servers.  Trust is tricky there though.
 
 ## To do later
 
  * Make a file-like API atop raw blocks
- * Play with erasure codes: https://storj.io/blog/2018/11/replication-is-bad-for-decentralized-storage-part-1-erasure-codes-for-fun-and-profit/
  * Make a C-compatible FFI API
- * Might the `crossbeam` crate have some useful bits and pieces in it for async programming?  Probably, but not worth checking out yet.
+ * Play with erasure codes: https://storj.io/blog/2018/11/replication-is-bad-for-decentralized-storage-part-1-erasure-codes-for-fun-and-profit/
 
 ## References
 
@@ -107,3 +105,4 @@ interoperates with existing systems instead of replacing them.
    ipfs as wasm module storage
  * <https://tech.fpcomplete.com/blog/casa> -- Content-addressed network
    for Haskell packages
+ * That one Go thing I can't remember the name of

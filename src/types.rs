@@ -18,6 +18,13 @@ impl PeerId {
         PeerId(Blake2Hash::new(seed))
     }
 
+    /// Create a new `PeerId` that is exactly the given
+    /// bytes.  Useful mainly for testing.
+    #[allow(unused)]
+    pub(crate) fn raw(bytes: [u8; BLAKE2_HASH_SIZE]) -> Self {
+        PeerId(Blake2Hash(bytes))
+    }
+
     /// Creates a new `PeerId` from an UNSECURE pRNG keykey.
     /// Useful for testing only!
     pub fn new_insecure_random(rng: &mut oorandom::Rand64) -> PeerId {
@@ -105,20 +112,12 @@ struct Bucket {
     /// The peers in the bucket.
     /// TODO: HashMap?  We need to make `Blake2Hash` impl `Hash` and idgaf right now.
     known_peers: HashMap<PeerId, SocketAddr>,
-    /// The min and max address range of the bucket; it stores peers with ID's
-    /// in the range of `[2^min,2^max)`.
-    ///
-    /// TODO: u32 is way overkill here, but, KISS for now.
-    /// ALSO TODO: This is no longer necessary.
-    address_range: (u32, u32),
 }
 
 impl Bucket {
-    fn new(bucket_size: usize, min_address: u32, max_address: u32) -> Self {
-        assert!(min_address < max_address);
+    fn new() -> Self {
         Self {
             known_peers: HashMap::new(),
-            address_range: (min_address, max_address),
         }
     }
 
@@ -158,16 +157,18 @@ pub struct PeerMap {
     bucket_size: usize,
 }
 
-impl PeerMap {
-    pub fn new() -> Self {
+impl Default for PeerMap {
+    fn default() -> Self {
         let bucket_size = 8;
-        let initial_bucket = Bucket::new(bucket_size, 0, Blake2Hash::max_power() as u32);
+        let initial_bucket = Bucket::new();
         Self {
             buckets: vec![initial_bucket; Blake2Hash::max_power()],
             bucket_size,
         }
     }
+}
 
+impl PeerMap {
     /// Insert a new peer into the PeerMap,
     ///
     /// TODO: Should return an error or something if doing so
@@ -249,5 +250,50 @@ impl PeerMap {
         self.buckets
             .iter()
             .fold(0, |acc, bucket| acc + (bucket.known_peers.len() as u32))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_distance_rank() {
+        let p1 = PeerId::raw([
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, //
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 1, //
+        ]);
+        let p2 = PeerId::raw([
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, //
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 1, //
+        ]);
+        assert_eq!(p1.distance_rank(p2), 511);
+        let p3 = PeerId::raw([
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, //
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 1, 1, //
+        ]);
+        assert_eq!(p1.distance_rank(p3), 502);
+    }
+
+    #[test]
+    fn test_distance_rank2() {
+        let p1 = PeerId::raw([
+            0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0,
+            1, 0, 1, //
+            0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0,
+            1, 0, 1, //
+        ]);
+        let p2 = PeerId::raw([
+            0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0,
+            1, 0, 1, //
+            0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0,
+            1, 0, 1, //
+        ]);
+        assert_eq!(p1.distance_rank(p2), 294);
     }
 }

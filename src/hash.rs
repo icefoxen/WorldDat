@@ -70,7 +70,7 @@ impl ops::BitXor for Blake2Hash {
 
 impl std::hash::Hash for Blake2Hash {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        &self.0[..].hash(state);
+        self.0[..].hash(state);
     }
 }
 
