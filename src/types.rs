@@ -4,12 +4,12 @@ use crate::hash::{Blake2Hash, BLAKE2_HASH_SIZE};
 use log::*;
 use serde_derive::*;
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
 
 /// A hash identifying a Peer.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct PeerId(Blake2Hash);
 
 impl PeerId {
@@ -104,7 +104,7 @@ impl Ord for ContactInfo {
 struct Bucket {
     /// The peers in the bucket.
     /// TODO: HashMap?  We need to make `Blake2Hash` impl `Hash` and idgaf right now.
-    known_peers: BTreeMap<PeerId, SocketAddr>,
+    known_peers: HashMap<PeerId, SocketAddr>,
     /// The min and max address range of the bucket; it stores peers with ID's
     /// in the range of `[2^min,2^max)`.
     ///
@@ -117,7 +117,7 @@ impl Bucket {
     fn new(bucket_size: usize, min_address: u32, max_address: u32) -> Self {
         assert!(min_address < max_address);
         Self {
-            known_peers: BTreeMap::new(),
+            known_peers: HashMap::new(),
             address_range: (min_address, max_address),
         }
     }

@@ -9,6 +9,8 @@ edition = "2018"
 [dependencies]
 # Core stuff
 quinn = "0.5"
+# Must be the version that quinn uses
+quinn-proto = "0.5"
 tokio = {version = "0.2", features = ["rt-core", "rt-threaded", "time"]}
 url = "2"
 blake2 = "0.8"

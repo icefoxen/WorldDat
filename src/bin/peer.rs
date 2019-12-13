@@ -174,7 +174,19 @@ mod server {
 
         // This is the part that handles the low-level UDP stuff
         // and passes it to/from the quinn state machine
-        let driver_handle = tokio::spawn(driver.unwrap_or_else(|e| error!("UDP I/O error: {}", e)));
+        let driver_handle = tokio::spawn(driver.unwrap_or_else(|e| {
+            let ok: quinn_proto::VarInt = 0u32.into();
+                match e {
+                    // Client hung up politely
+                    quinn::ConnectionError::ApplicationClosed {
+                        reason: quinn_proto::ApplicationClose {
+                            error_code,
+                            ..
+                        }
+                    } => if error_code != ok { error!("Application error: {}", error_code)},
+                    _ => error!("UDP I/O error: {:#?}", e)
+                }
+        }));
         async move {
             info!("Connection established");
             // Client can open multiple streams, each a new request.
