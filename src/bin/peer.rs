@@ -323,6 +323,7 @@ mod client {
                 use std::io;
                 use std::io::Write;
                 io::stdout().write_all(&resp).unwrap();
+                io::stdout().write(b"\n").unwrap();
                 io::stdout().flush().unwrap();
             }
             // Dropping handles allows the corresponding objects to automatically shut down
@@ -346,18 +347,28 @@ fn main() -> Result<(), ()> {
         .build()
         .expect("Could not build runtime");
 
-    let handle = runtime.enter(|| {
+    // We keep a list of all the things we have to wait to finish,
+    // and don't exit until they are all complete.
+    use std::sync::Mutex;
+    let handles = Mutex::new(vec![]);
+    runtime.enter(|| {
         for i in 0..10 {
             let msg = format!("This is client {}", i);
             let msg_bytes = msg.into_boxed_str().into_boxed_bytes();
-            tokio::spawn(client::run_client(opt.bootstrap_peer, msg_bytes).expect("Could not run client"));
+            let h = tokio::spawn(
+                client::run_client(opt.bootstrap_peer, msg_bytes).expect("Could not run client"),
+            );
+            handles.lock().unwrap().push(h);
         }
-        tokio::spawn(server::run_server(opt.listen))
+        let h = tokio::spawn(server::run_server(opt.listen));
+        handles.lock().unwrap().push(h);
     });
 
-    runtime
-        .block_on(handle)
-        .expect("Runtime errored while waiting for service to finish")
-        .expect("???");
+    for handle in handles.into_inner().unwrap().into_iter() {
+        runtime
+            .block_on(handle)
+            .expect("Runtime errored while waiting for service to finish")
+            .expect("???");
+    }
     Ok(())
 }
