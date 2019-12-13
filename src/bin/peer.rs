@@ -81,6 +81,7 @@ mod server {
 
     use futures::{StreamExt, TryFutureExt};
     use log::*;
+    use tokio::task::JoinHandle;
 
     use quinn::{
         Certificate, CertificateChain, Endpoint, EndpointDriver, Incoming, PrivateKey,
@@ -203,10 +204,8 @@ mod server {
     }
 
     /// Runs a QUIC server bound to given address.
-    pub fn run_server<A: ToSocketAddrs>(
-        addr: A,
-    ) -> Result<(), Box<dyn Error>> {
-        let (driver, mut incoming, _server_cert) = make_server_endpoint(addr)?;
+    pub fn run_server<A: ToSocketAddrs>(addr: A) -> JoinHandle<()> {
+        let (driver, mut incoming, _server_cert) = make_server_endpoint(addr).expect("TODO");
         // drive UDP socket
         tokio::spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
         // accept a single connection
@@ -217,8 +216,7 @@ mod server {
                 handle_connection(incoming_conn)
                     .unwrap_or_else(|_| error!("Connection handling failed")),
             );
-        });
-        Ok(())
+        })
     }
 }
 
@@ -230,7 +228,7 @@ mod client {
 
     use futures::TryFutureExt;
     use log::*;
-    use tokio::{task::JoinHandle};
+    use tokio::task::JoinHandle;
 
     use quinn::{ClientConfig, ClientConfigBuilder, Endpoint};
     /// Dummy certificate verifier that treats any certificate as valid.
@@ -337,6 +335,7 @@ mod client {
 }
 
 fn main() -> Result<(), ()> {
+    let opt = Opt::from_args();
     pretty_env_logger::init();
     // server and client are running on the same thread asynchronously
     // To use a thread pool switch basic_scheduler() for threaded_scheduler()
@@ -347,10 +346,8 @@ fn main() -> Result<(), ()> {
         .build()
         .expect("Could not build runtime");
 
-    let opt = Opt::from_args();
-
     let handle = runtime.enter(|| {
-        server::run_server(opt.listen).expect("Could not run server");
+        server::run_server(opt.listen);//.expect("Could not run server");
         client::run_client(opt.listen).expect("Could not run client")
     });
 
