@@ -20,8 +20,8 @@ use tokio::runtime::Builder;
 #[derive(StructOpt, Debug, Clone)]
 pub struct Opt {
     /// Initial node to connect to, if any.
-    #[structopt(short = "b", long = "bootstrap")]
-    bootstrap_peer: Option<SocketAddr>,
+    #[structopt(short = "b", long = "bootstrap", default_value = "[::1]:4433")]
+    bootstrap_peer: SocketAddr,
 
     /// Address to listen on for incoming connections.
     /// TODO: it would be nice to have
@@ -77,7 +77,7 @@ where
 }
 
 mod server {
-    use std::{error::Error, net::ToSocketAddrs, sync::Arc};
+    use std::{error::Error, sync::Arc, net::SocketAddr};
 
     use futures::{StreamExt, TryFutureExt};
     use log::*;
@@ -119,14 +119,15 @@ mod server {
     /// - UDP socket driver
     /// - a stream of incoming QUIC connections
     /// - server certificate serialized into DER format
-    pub fn make_server_endpoint<A: ToSocketAddrs>(
-        bind_addr: A,
+    pub fn make_server_endpoint(
+        bind_addr: SocketAddr,
     ) -> Result<(EndpointDriver, Incoming, Vec<u8>), Box<dyn Error>> {
         let (server_config, server_cert) = configure_server()?;
         let mut endpoint_builder = Endpoint::builder();
         endpoint_builder.listen(server_config);
+        info!("Listening on address {}", bind_addr);
         let (driver, _endpoint, incoming) =
-            endpoint_builder.bind(&bind_addr.to_socket_addrs().unwrap().next().unwrap())?;
+            endpoint_builder.bind(&bind_addr)?;
         Ok((driver, incoming, server_cert))
     }
 
@@ -204,7 +205,7 @@ mod server {
     }
 
     /// Runs a QUIC server bound to given address.
-    pub fn run_server<A: ToSocketAddrs>(addr: A) -> JoinHandle<()> {
+    pub fn run_server(addr: SocketAddr) -> JoinHandle<()> {
         let (driver, mut incoming, _server_cert) = make_server_endpoint(addr).expect("TODO");
         // drive UDP socket
         tokio::spawn(driver.unwrap_or_else(|e| panic!("IO error: {}", e)));
@@ -222,7 +223,7 @@ mod server {
 
 mod client {
     use std::{
-        net::{Ipv4Addr, SocketAddr, ToSocketAddrs, SocketAddrV4, Ipv6Addr, SocketAddrV6},
+        net::{SocketAddr, Ipv6Addr},
         sync::Arc,
     };
 
@@ -263,21 +264,18 @@ mod client {
         cfg
     }
 
-    pub fn run_client <A: ToSocketAddrs>(server_addr: A,
+    pub fn run_client(server_addr: SocketAddr,
         ) -> Result<JoinHandle<()>, ()> {
         let client_cfg = configure_client();
         let mut endpoint_builder = Endpoint::builder();
         endpoint_builder.default_client_config(client_cfg);
 
         let (driver, endpoint, _) =
-            endpoint_builder.bind(&SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)))
-            //endpoint_builder.bind(&SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)))
+            endpoint_builder.bind(&SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)))
             .expect("Could not build client endpoint; is the port already used or something?");
         tokio::spawn(driver.unwrap_or_else(|e| error!("Probably fatal IO error in client: {}", e)));
 
-        let server_addr = server_addr.to_socket_addrs().expect("Invalid socket addr for client?").next().unwrap();
-        dbg!(server_addr);
-        let server_addr = SocketAddr::from((Ipv6Addr::LOCALHOST, 4433));
+        //let server_addr = server_addr.to_socket_addrs().expect("Invalid socket addr for client?").next().unwrap();
         // connect to server
         let handle = tokio::spawn(async move {
             let quinn::NewConnection {
@@ -312,7 +310,7 @@ mod client {
                     .await
                     .map_err(|e| info!("failed to shutdown stream: {}", e))
                     .expect("TODO");
-                info!("Stream shutdown");
+                info!("Send stream shutdown");
 
                 let resp = recv
                     .read_to_end(usize::max_value())
@@ -341,14 +339,15 @@ fn main() -> Result<(), ()> {
     // To use a thread pool switch basic_scheduler() for threaded_scheduler()
     let mut runtime = Builder::new()
         .basic_scheduler()
+        //.threaded_scheduler()
         .thread_name("peer-io-worker")
         .enable_all()
         .build()
         .expect("Could not build runtime");
 
     let handle = runtime.enter(|| {
-        server::run_server(opt.listen);//.expect("Could not run server");
-        client::run_client(opt.listen).expect("Could not run client")
+        server::run_server(opt.listen);
+        client::run_client(opt.bootstrap_peer).expect("Could not run client")
     });
 
     runtime
