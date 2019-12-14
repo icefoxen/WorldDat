@@ -284,6 +284,12 @@ pub struct FlatPeerMap {
     bucket_size: usize,
     /// Our peer ID.  We usually need this to calculate distances.
     peer_id: PeerId,
+    /// The next item in each bucket to evict.
+    /// When a bucket is full we choose a random item in it to
+    /// kick out, but it's kinda overkill to have a full PRNG
+    /// for this, so we just cycle through indices 0 to `bucket_size`
+    /// TODO: Ponder better eviction strategies.
+    next_eviction: usize,
 }
 
 impl FlatPeerMap {
@@ -293,6 +299,7 @@ impl FlatPeerMap {
             count: 0,
             bucket_size,
             peer_id,
+            next_eviction: 0,
         }
     }
     pub fn default(peer_id: PeerId) -> Self {
@@ -332,26 +339,53 @@ impl FlatPeerMap {
     /// We DO prevent duplicates though; if a peer is given that has a peer_id
     /// that already exists in the map, it will replace the old one.
     pub fn insert(&mut self, new_peer: Contact) {
-        let bucket = self.bucket_for_mut(&new_peer.peer_id);
-        for entry in bucket {
-            match entry {
-                // We know this peer, update it
-                Some(Contact { peer_id, .. }) if *peer_id == new_peer.peer_id => {
-                    *entry = Some(new_peer);
-                    break;
-                }
-                // Wrong peer, carry on
-                Some(_) => (),
-                // Empty slot, snag it.
-                None => {
-                    *entry = Some(new_peer);
-                    self.count += 1;
-                    break;
-                }
-            };
+        {
+            let bucket = self.bucket_for_mut(&new_peer.peer_id);
+            for entry in bucket {
+                match entry {
+                    // We know this peer, update it
+                    Some(Contact { peer_id, .. }) if *peer_id == new_peer.peer_id => {
+                        *entry = Some(new_peer);
+                        return;
+                    }
+                    // Wrong peer, carry on
+                    Some(_) => (),
+                    // Empty slot, snag it.
+                    None => {
+                        *entry = Some(new_peer);
+                        self.count += 1;
+                        return;
+                    }
+                };
+            }
         }
         // If we've gotten here, the bucket is full!
-        // TODO: Evict something!
+        // Choose an item to replace.
+        //
+        // TODO LATER:
+        // The various `bucket_for`'s here are kinda horrible
+        // to avoid double-borrows of `self`, but it's fine for
+        // now.  Maybe just doing raw indices instead of slices
+        // might help?
+        let old_item = {
+            let bucket = self.bucket_for(&new_peer.peer_id);
+            self.item_to_evict(bucket)
+        };
+        let bucket = self.bucket_for_mut(&new_peer.peer_id);
+        bucket[old_item] = Some(new_peer);
+    }
+
+    /// Decide which item in the bucket to evict, and return
+    /// its index into the bucket.  Assumes the bucket
+    /// is full and is equal to `self.bucket_size`.
+    /// Currently this is just a round-robin strategy.
+    fn item_to_evict(&self, bucket: &[Option<Contact>]) -> usize {
+        assert_eq!(bucket.len(), self.bucket_size);
+        for i in bucket {
+            debug_assert!(i.is_some());
+        }
+        //self.next_eviction = (self.next_eviction + 1) % self.bucket_size;
+        self.next_eviction
     }
 
     /// Checks whether we know about the given peer
@@ -381,7 +415,7 @@ impl FlatPeerMap {
         // it works.
         //
         // A BTreeMap or something like it might be a better solution...
-        // More complex though.
+        // More complex though.  This IS basically a range query, though.
         while results.len() < count && search_width < Blake2Hash::max_power() {
             // Add bucket ahead of target
             {
@@ -489,6 +523,22 @@ mod tests {
         }
     }
 
+    /// Test whether things get evicted from the `PeerMap` properly.
+    /// TODO: Implement.  Need to generate ID's that I know will
+    /// and will not clash.
+    #[test]
+    fn peermap_eviction() {
+        let rng = &mut Rand64::new(235445);
+        let id = PeerId::new_insecure_random(rng);
+        let mut map = FlatPeerMap::default(id);
+        let contains: Vec<Contact> = (0..12)
+            .map(|_| Contact::new_dummy(PeerId::new_insecure_random(rng)))
+            .collect();
+        for c in &contains {
+            map.insert(*c);
+        }
+    }
+
     #[test]
     fn peermap_find_closest() {
         let rng = &mut Rand64::new(235445);
@@ -503,6 +553,9 @@ mod tests {
 
         let itms = map.find_closest_peers(&id, 16);
         // TODO: Hmm how to test this.  :|
+        // Go through the returned list and make sure
+        // all the peers in it are actually the closest
+        // peers the map knows about, I suppose.
         assert_eq!(itms.len(), 16);
         assert_eq!(map.count(), 84);
     }
