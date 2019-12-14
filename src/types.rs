@@ -90,6 +90,16 @@ pub struct Contact {
     address: SocketAddr,
 }
 
+impl Contact {
+    /// New dummy contact with invalid address, for testing.
+    #[allow(unused)]
+    pub(crate) fn new_dummy(peer_id: PeerId) -> Self {
+        use std::net::{Ipv6Addr, SocketAddrV6};
+        let address = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 1234, 0, 0));
+        Self { peer_id, address }
+    }
+}
+
 impl PartialOrd for Contact {
     /// Contact info is ordered by `peer_id`,
     /// so this just calls `self.cmp`.
@@ -255,7 +265,9 @@ impl PeerMap {
 /// hash (as measured by the XOR distance metric), the lower resolution
 /// it is.
 ///
-/// This is implemented as a flat vec of Contacts
+/// This is implemented as a flat vec of Contacts.  Each Contact is
+/// 96 bytes, so with our default bucket_size of 8 this is 384 kb.
+/// I might have gone a little Hard using SHA512.
 pub struct FlatPeerMap {
     /// All our known contacts, stored as a flat, sparse array.
     /// We only store a few thousand (with default bucket_size = 8)
@@ -281,6 +293,9 @@ impl FlatPeerMap {
         }
     }
     pub fn default(peer_id: PeerId) -> Self {
+        // TODO: 8 might actually be a real conservative minimum.
+        // On average we store like, log2 of the things we actually
+        // see or something...
         Self::new(peer_id, 8)
     }
 
@@ -336,19 +351,20 @@ impl FlatPeerMap {
     }
 
     /// Checks whether we know about the given peer
-    pub fn contains(&self, peer_id: PeerId) -> Option<Contact> {
+    pub fn contains(&self, peer_id: &PeerId) -> Option<Contact> {
         let bucket = self.bucket_for(&peer_id);
         bucket
             .iter()
-            .filter_map(|maybe_contact| *maybe_contact)
-            .find(|contact| contact.peer_id == peer_id)
+            .filter_map(|maybe_contact| maybe_contact.as_ref())
+            .find(|contact| contact.peer_id == *peer_id)
+            .cloned()
     }
 
     /// Return a `Vec<Contact>` containing the `count peers (or the most we have anyway)
     /// closest to the given one.  Best case `O(1)`, if `count == bucket_size` and
     /// our peer map is dense/full.  Worst case `O(N)` if we have to search our
     /// whole peer map to scrape together `count` peers.
-    fn find_closest_peers(&self, needle: &PeerId, count: usize) -> Vec<Contact> {
+    pub fn find_closest_peers(&self, needle: &PeerId, count: usize) -> Vec<Contact> {
         assert!(count <= self.contacts.len(), "Good luck with that buddy");
 
         let mut results: Vec<Contact> = Vec::with_capacity(count);
@@ -436,20 +452,19 @@ impl FlatPeerMap {
             Err(self.find_closest_peers(self_id, peer_id))
         }
     }
+    */
 
     /// Returns total number of peers known.
-    /// TODO: usize? u64?
-    pub fn count(&self) -> u32 {
-        self.buckets
-            .iter()
-            .fold(0, |acc, bucket| acc + (bucket.known_peers.len() as u32))
+    /// Performance: `O(n)` with maximum number of peers.
+    pub fn count(&self) -> usize {
+        self.contacts.iter().filter_map(|contact| *contact).count()
     }
-    */
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oorandom::Rand64;
     // TODO: Verify
     #[test]
     fn test_distance_rank() {
@@ -491,5 +506,50 @@ mod tests {
             1, 0, 1, //
         ]);
         assert_eq!(p1.distance_rank(&p2), 294);
+    }
+
+    #[test]
+    fn peermap_contains() {
+        let rng = &mut Rand64::new(235445);
+        let id = PeerId::new_insecure_random(rng);
+        let mut map = FlatPeerMap::default(id);
+        // TODO: Using random ID's is not actually a great test,
+        // since statistically half of them will end up in the furthest-most
+        // bucket and having more than 12 of them or so will overflow the
+        // bucket and get evicted.
+        let contains: Vec<Contact> = (0..12)
+            .map(|_| Contact::new_dummy(PeerId::new_insecure_random(rng)))
+            .collect();
+        for c in &contains {
+            map.insert(*c);
+        }
+        for c in &contains {
+            assert!(map.contains(&c.peer_id).is_some());
+        }
+
+        let does_not_contain: Vec<Contact> = (0..100)
+            .map(|_| Contact::new_dummy(PeerId::new_insecure_random(rng)))
+            .collect();
+        for c in &does_not_contain {
+            assert!(map.contains(&c.peer_id).is_none());
+        }
+    }
+
+    #[test]
+    fn peermap_find_closest() {
+        let rng = &mut Rand64::new(235445);
+        let id = PeerId::new_insecure_random(rng);
+        let mut map = FlatPeerMap::new(id, 8);
+        let contains: Vec<Contact> = (0..0xFF)
+            .map(|_| Contact::new_dummy(PeerId::new_insecure_random(rng)))
+            .collect();
+        for c in &contains {
+            map.insert(*c);
+        }
+
+        let itms = map.find_closest_peers(&id, 8);
+        // Hmm how to test this.  :|
+        assert_eq!(itms.len(), 8);
+        assert_eq!(map.count(), 45);
     }
 }
