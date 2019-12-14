@@ -359,6 +359,8 @@ mod client {
 fn main() -> Result<(), ()> {
     let opt = Opt::from_args();
     pretty_env_logger::init();
+    use log::trace;
+    trace!("Size of contact: {}", std::mem::size_of::<Option<worlddat::types::Contact>>());
     // server and client are running on the same thread asynchronously
     // To use a thread pool switch basic_scheduler() for threaded_scheduler()
     let mut runtime = Builder::new()

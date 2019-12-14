@@ -166,7 +166,7 @@ pub struct PeerMap {
 
 impl Default for PeerMap {
     fn default() -> Self {
-        let bucket_size = 8;
+        let bucket_size = 16;
         let initial_bucket = Bucket::new();
         Self {
             buckets: vec![initial_bucket; Blake2Hash::max_power()],
@@ -265,9 +265,9 @@ impl PeerMap {
 /// hash (as measured by the XOR distance metric), the lower resolution
 /// it is.
 ///
-/// This is implemented as a flat vec of Contacts.  Each Contact is
-/// 96 bytes, so with our default bucket_size of 8 this is 384 kb.
-/// I might have gone a little Hard using SHA512.
+/// This is implemented as a flat vec of Contacts.  Each Option<Contact> is
+/// 64 bytes, so with our default bucket_size of 16 this is 256 kb.
+/// Its size is `bits in the PeerID hash * bucket size * size of Contact`.
 pub struct FlatPeerMap {
     /// All our known contacts, stored as a flat, sparse array.
     /// We only store a few thousand (with default bucket_size = 8)
@@ -278,6 +278,8 @@ pub struct FlatPeerMap {
     /// Very much an open-address hash table with a fixed size,
     /// actually.
     contacts: Vec<Option<Contact>>,
+    /// Number of contacts contained.
+    count: usize,
     /// The maximum number of peers per bucket.
     bucket_size: usize,
     /// Our peer ID.  We usually need this to calculate distances.
@@ -288,15 +290,16 @@ impl FlatPeerMap {
     pub fn new(peer_id: PeerId, bucket_size: usize) -> Self {
         Self {
             contacts: vec![None; Blake2Hash::max_power() as usize * bucket_size],
+            count: 0,
             bucket_size,
             peer_id,
         }
     }
     pub fn default(peer_id: PeerId) -> Self {
-        // TODO: 8 might actually be a real conservative minimum.
+        // 16 might actually be a somewhat conservative minimum.
         // On average we store like, log2 of the things we actually
         // see or something...
-        Self::new(peer_id, 8)
+        Self::new(peer_id, 16)
     }
 
     /// Fetches the bucket that the contact should be in.
@@ -342,6 +345,7 @@ impl FlatPeerMap {
                 // Empty slot, snag it.
                 None => {
                     *entry = Some(new_peer);
+                    self.count += 1;
                     break;
                 }
             };
@@ -405,59 +409,19 @@ impl FlatPeerMap {
         results
     }
 
-    /*
-    /// Returns a Vec of the `bucket_size` closest peers we can find to the given one,
-    /// in no particular order.
-    fn find_closest_peers(&self, self_id: PeerId, peer_id: PeerId) -> Vec<(PeerId, SocketAddr)> {
-        // The closest peers will be in the same bucket as the target peer.
-        let search_bucket = self_id.distance_rank(peer_id) as usize;
-        let mut search_width = 1;
-        let mut search_results = vec![];
-        search_results.extend(self.buckets[search_bucket].known_peers.iter());
-        while search_results.len() < self.bucket_size && search_width < Blake2Hash::max_power() {
-            // trace!("searching width {} from {}", search_width, search_bucket);
-            // trace!("search_results: {:?}", search_results);
-            let target_behind = search_bucket.saturating_sub(search_width);
-            // This one heckin' better not overflow.
-            let target_ahead = search_bucket + search_width;
-
-            // target_behind is negative, or would be if we weren't doing saturating_sub()
-            // on an unsigned integer.
-            if search_width > search_bucket {
-                search_results.extend(self.buckets[target_behind].known_peers.iter());
-            }
-
-            if target_ahead < Blake2Hash::max_power() as usize {
-                search_results.extend(self.buckets[target_ahead].known_peers.iter());
-            }
-            search_width += 1;
-        }
-        search_results
-            .iter()
-            .map(|ci: &(&PeerId, &SocketAddr)| (*ci.0, *ci.1))
-            .take(self.bucket_size)
-            .collect()
-    }
-
     /// Looks up the given peer id.  If we know about it, return the address we have,
     /// otherwise return a list of the nearest peers we know to it.
-    pub fn lookup(
-        &self,
-        self_id: PeerId,
-        peer_id: PeerId,
-    ) -> Result<(PeerId, SocketAddr), Vec<(PeerId, SocketAddr)>> {
-        if let Some(res) = self.contains(self_id, peer_id) {
+    pub fn lookup(&self, peer_id: &PeerId) -> Result<Contact, Vec<Contact>> {
+        if let Some(res) = self.contains(peer_id) {
             Ok(res)
         } else {
-            Err(self.find_closest_peers(self_id, peer_id))
+            Err(self.find_closest_peers(peer_id, self.bucket_size))
         }
     }
-    */
 
     /// Returns total number of peers known.
-    /// Performance: `O(n)` with maximum number of peers.
     pub fn count(&self) -> usize {
-        self.contacts.iter().filter_map(|contact| *contact).count()
+        self.count
     }
 }
 
@@ -469,17 +433,17 @@ mod tests {
     #[test]
     fn test_distance_rank() {
         let p1 = PeerId::raw([
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 1, //
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, //
         ]);
         let p2 = PeerId::raw([
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 1, //
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, //
         ]);
         assert_eq!(p1.distance_rank(&p2), 255);
         let p3 = PeerId::raw([
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 1, 1, //
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, //
         ]);
         assert_eq!(p1.distance_rank(&p3), 246);
     }
@@ -488,12 +452,12 @@ mod tests {
     #[test]
     fn test_distance_rank2() {
         let p1 = PeerId::raw([
-            0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0,
-            1, 0, 1, //
+            0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, //
+            0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, //
         ]);
         let p2 = PeerId::raw([
-            0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0,
-            1, 0, 1, //
+            0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, //
+            0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, //
         ]);
         assert_eq!(p1.distance_rank(&p2), 38);
     }
@@ -529,7 +493,7 @@ mod tests {
     fn peermap_find_closest() {
         let rng = &mut Rand64::new(235445);
         let id = PeerId::new_insecure_random(rng);
-        let mut map = FlatPeerMap::new(id, 8);
+        let mut map = FlatPeerMap::new(id, 16);
         let contains: Vec<Contact> = (0..0xFF)
             .map(|_| Contact::new_dummy(PeerId::new_insecure_random(rng)))
             .collect();
@@ -537,9 +501,9 @@ mod tests {
             map.insert(*c);
         }
 
-        let itms = map.find_closest_peers(&id, 8);
-        // Hmm how to test this.  :|
-        assert_eq!(itms.len(), 8);
-        assert_eq!(map.count(), 51);
+        let itms = map.find_closest_peers(&id, 16);
+        // TODO: Hmm how to test this.  :|
+        assert_eq!(itms.len(), 16);
+        assert_eq!(map.count(), 84);
     }
 }
