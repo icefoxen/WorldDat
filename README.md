@@ -75,6 +75,43 @@ These are analogous to Kademila (ping, store, find node, find value).  So our op
  * Find peers that have value
  * Announce value
 
+Ah, okay, so the difference between Kademila and IPFS is that Kademila
+has each node store chunks with hashes near its own hash, and IPFS has
+each node store which nodes (may) have the chunks with hashes near its
+own hash.  So in IPFS the DHT doesn't actually store the data, it stores
+the index.  This means that in Kademila the system tries to spread data
+evenly around the network, while in IPFS the actual data can be chunky.
+SO, each peer must have a block store of some kind or another, and also
+a block index that maps a block ID to a list of potential peers that
+have it.  We can have the block index have a limited size and resolution
+similar to the peer map, so that we store more info about blocks who
+are closer to us, though I kinda feel like we're going to have to store
+info about a lot more blocks than peers.  I'm feeling like a block size
+of 1 MB is not insane, and that means to store a medium size file we
+need thousands of blocks.
+
+So to look up a block, we find which peer we know about that is closest
+to the block and ask it for it.  It may reply "here is the block"
+(unlikely), or it may reply "here is a list of who I know has the block",
+or it may reply "I don't know who has the block, here is a list of peers
+I know who are closer".  I suppose the list might be empty, at which
+point we just can't find the block.
+
+Then, how does the "list of people I know has the block" get updated?
+First, when a peer has a block added to its store (such as the user
+saying "host this file"), it will announce it to the peers it knows of
+who are closest to that block.  Then those peers can do the same, gossip
+protocol style.  This... sorta feels easy for a malicious actor to fuck
+up, but for now okay.  Later we may have some sort of trust scheme.
+Second, if a peer sends a block it has to another peer, it can announce
+that too maybe.
+
+To read:
+
+ * https://github.com/libp2p/specs/blob/8b89dc2521b48bf6edab7c93e8129156a7f5f02c/kad-dht/README.md
+ * http://dnslink.io/
+
+
 
 ## To do
 
